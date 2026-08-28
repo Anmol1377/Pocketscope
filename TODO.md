@@ -64,6 +64,12 @@ See [BUILD.md](BUILD.md) for the reasoning behind the order.
 - [x] Captured data is per tab and clears on each page load (toggle to keep it)
 - [x] Clear button in the drawer; Eruda opens in dark theme
 
+- [x] Tap to inspect — touch highlights, tap reports selector, DOM path, box model,
+      computed styles and outerHTML
+- [x] Audit tab — mobile-specific checks: viewport meta, mixed content, oversized
+      images, tap-target size, sideways scroll, alt text, lang attribute
+- [x] Network filter — search by URL/method/status, and a failed-only toggle
+
 - [ ] Find in page
 - [ ] Command history in the console prompt (up-arrow recall)
 - [ ] Tab thumbnails
@@ -85,7 +91,7 @@ What Eruda structurally cannot do, because it isn't the browser:
 
 ## Step 4 — only if step 2 says yes
 
-- [ ] Own Elements tab, retire Eruda
+- [ ] Full DOM tree (tap-to-inspect covers the common case)
 - [ ] Resource timing via `PerformanceObserver` (images, CSS, fonts)
 - [ ] WebSocket frames
 - [ ] iOS build

@@ -179,6 +179,111 @@ export default String.raw`
     post(o);
   };
 
+  // ---- tap to inspect ----
+  // The mobile answer to an Elements panel: touch highlights, tap reports.
+  var sel = function (el) {
+    if (!el || !el.tagName) return '';
+    if (el.id) return '#' + el.id;
+    var out = el.tagName.toLowerCase();
+    var c = el.getAttribute && el.getAttribute('class');
+    if (c) out += '.' + String(c).trim().split(/\s+/).slice(0, 3).join('.');
+    return out;
+  };
+  window.__psInspect = function (on) {
+    if (!on) { if (window.__psOffInspect) window.__psOffInspect(); return; }
+    if (window.__psOffInspect) return;
+    var box = document.createElement('div');
+    box.setAttribute('data-pocketscope', '1');
+    box.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483646;' +
+      'border:2px solid #5AA9E6;background:rgba(90,169,230,.14);border-radius:2px;';
+    (document.body || document.documentElement).appendChild(box);
+
+    var draw = function (el) {
+      var r = el.getBoundingClientRect();
+      box.style.top = r.top + 'px'; box.style.left = r.left + 'px';
+      box.style.width = r.width + 'px'; box.style.height = r.height + 'px';
+    };
+    var over = function (e) { if (e.target && e.target !== box) draw(e.target); };
+    var pick = function (e) {
+      var el = e.target;
+      if (!el || el === box) return;
+      e.preventDefault(); e.stopPropagation();
+      draw(el);
+      var r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+      var keys = ['display', 'position', 'width', 'height', 'margin', 'padding',
+                  'border', 'font-family', 'font-size', 'line-height', 'color',
+                  'background-color', 'flex', 'grid-template-columns', 'z-index', 'overflow'];
+      var styles = {};
+      keys.forEach(function (k) { var v = cs.getPropertyValue(k); if (v) styles[k] = v; });
+      var chain = [], node = el, n = 0;
+      while (node && node.nodeType === 1 && n++ < 6) { chain.unshift(sel(node)); node = node.parentElement; }
+      post({ t: 'element', tag: el.tagName.toLowerCase(), sel: sel(el), path: chain.join(' > '),
+             rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) },
+             styles: styles, html: clip(el.outerHTML, 3000),
+             text: clip((el.textContent || '').trim(), 200) });
+    };
+    document.addEventListener('touchstart', over, true);
+    document.addEventListener('click', pick, true);
+    window.__psOffInspect = function () {
+      document.removeEventListener('touchstart', over, true);
+      document.removeEventListener('click', pick, true);
+      if (box.parentNode) box.parentNode.removeChild(box);
+      window.__psOffInspect = null;
+    };
+  };
+
+  // ---- page audit ----
+  // Checks that actually bite on mobile, not a generic lint.
+  window.__psAudit = function () {
+    var out = [];
+    var add = function (level, title, detail) { out.push({ level: level, title: title, detail: detail }); };
+    try {
+      var vp = document.querySelector('meta[name="viewport"]');
+      if (!vp) add('fail', 'No viewport meta tag', 'The page will render at desktop width and be zoomed out.');
+      else if (/user-scalable\s*=\s*no|maximum-scale\s*=\s*1/.test(vp.content))
+        add('warn', 'Zoom is disabled', 'user-scalable=no blocks people who need to magnify text.');
+
+      if (location.protocol === 'https:') {
+        var mixed = [].slice.call(document.querySelectorAll('[src^="http:"],[href^="http:"]'));
+        if (mixed.length) add('fail', mixed.length + ' mixed-content references',
+          'http:// resources on an https:// page are blocked or downgrade security.');
+      }
+      if (!document.title) add('warn', 'No page title', 'Bad for tabs, history and search results.');
+      var desc = document.querySelector('meta[name="description"]');
+      if (!desc || !desc.content) add('warn', 'No meta description', 'Search engines will invent one.');
+
+      var imgs = [].slice.call(document.images);
+      var noAlt = imgs.filter(function (i) { return !i.hasAttribute('alt'); });
+      if (noAlt.length) add('warn', noAlt.length + ' of ' + imgs.length + ' images lack alt text',
+        'Screen readers announce the filename instead.');
+      var huge = imgs.filter(function (i) {
+        return i.naturalWidth > i.clientWidth * 2 && i.clientWidth > 0;
+      });
+      if (huge.length) add('warn', huge.length + ' oversized images',
+        'Served at more than twice their displayed width — wasted bytes on mobile.');
+
+      var lazy = imgs.filter(function (i) { return i.loading === 'lazy'; }).length;
+      if (imgs.length > 5 && lazy === 0) add('info', 'No lazy-loaded images',
+        imgs.length + ' images all load eagerly. loading="lazy" would defer the offscreen ones.');
+
+      var wide = document.documentElement.scrollWidth > window.innerWidth + 2;
+      if (wide) add('fail', 'Page scrolls sideways',
+        'Content is ' + document.documentElement.scrollWidth + 'px wide in a ' + window.innerWidth + 'px viewport.');
+
+      var small = [].slice.call(document.querySelectorAll('a,button,input,select'))
+        .filter(function (el) { var r = el.getBoundingClientRect(); return r.width && r.height && (r.width < 44 || r.height < 44); });
+      if (small.length) add('warn', small.length + ' tap targets under 44px',
+        'Below the size most guidelines call reliably tappable.');
+
+      var inline = document.querySelectorAll('script:not([src])').length;
+      if (inline > 10) add('info', inline + ' inline scripts', 'Each one blocks parsing where it sits.');
+      if (!document.querySelector('html[lang]')) add('warn', 'No lang attribute on <html>',
+        'Screen readers cannot pick the right pronunciation.');
+    } catch (e) {}
+    if (!out.length) add('pass', 'Nothing flagged', 'The checks Pocketscope runs all passed on this page.');
+    post({ t: 'audit', items: out });
+  };
+
   // ---- Eruda, on demand only ----
   // Not auto-loaded: its floating entry button sits on top of our toolbar, and the
   // drawer covers the common cases. This is the escape hatch for DOM inspection.

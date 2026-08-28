@@ -35,7 +35,7 @@ const hostOf = (u) => {
 };
 
 const DOWNLOADABLE = /\.(zip|apk|pdf|dmg|exe|mp4|mp3|csv|xlsx?|docx?|pptx?|tar|gz|7z|iso|deb|rpm)(\?|$)/i;
-const blankData = () => ({ reqs: [], logs: [], storage: [], perf: null });
+const blankData = () => ({ reqs: [], logs: [], storage: [], perf: null, element: null, audit: null });
 
 export default function Root() {
   return <SafeAreaHost><App /></SafeAreaHost>;
@@ -67,6 +67,7 @@ function App() {
   const [drawerH, setDrawerH] = useState(320);
   const [screen, setScreen] = useState(null);   // tabs | history | bookmarks | downloads | settings
   const [menu, setMenu] = useState(false);
+  const [inspecting, setInspecting] = useState(false);
 
   const history = usePersistedList('ps.history', 300);
   const bookmarks = usePersistedList('ps.bookmarks', 200);
@@ -124,6 +125,8 @@ function App() {
     if (m.t === 'net')       patchData(id, (s) => ({ ...s, reqs: [...s.reqs.slice(-299), { ...m, key }] }));
     else if (m.t === 'log')  patchData(id, (s) => ({ ...s, logs: [...s.logs.slice(-299), { ...m, key }] }));
     else if (m.t === 'perf') patchData(id, (s) => ({ ...s, perf: m }));
+    else if (m.t === 'element') patchData(id, (s) => ({ ...s, element: m }));
+    else if (m.t === 'audit') patchData(id, (s) => ({ ...s, audit: m.items }));
     else if (m.t === 'storage') {
       patchData(id, (s) => ({ ...s, storage: [
         ...m.local.map((x) => ({ ...x, scope: 'local' })),
@@ -173,6 +176,11 @@ function App() {
   };
 
   const clearCaptured = (id = activeId) => patchData(id, () => blankData());
+
+  const setInspect = (on) => {
+    setInspecting(on);
+    web()?.injectJavaScript('window.__psInspect && window.__psInspect(' + (on ? 'true' : 'false') + '); true;');
+  };
 
   const clearBrowsingData = (picked) => {
     const done = [];
@@ -281,6 +289,7 @@ function App() {
               userAgent={desktopUA ? DESKTOP_UA : undefined}
               onLoadStart={() => {
                 // A new document means the old readings describe a page that is gone.
+                if (t.id === activeId && inspecting) setInspecting(false);
                 if (!preserveLog) patchData(t.id, () => blankData());
                 else patchData(t.id, (x) => ({ ...x, perf: null }));
               }}
@@ -320,8 +329,11 @@ function App() {
       {drawer && (
         <DevDrawer
           reqs={d.reqs} logs={d.logs} storage={d.storage} perf={d.perf}
+          element={d.element} audit={d.audit}
+          inspecting={inspecting} onToggleInspect={setInspect}
+          onRefreshAudit={() => web()?.injectJavaScript('window.__psAudit && window.__psAudit(); true;')}
           height={drawerH} setHeight={setDrawerH}
-          onClose={() => setDrawer(false)}
+          onClose={() => { setDrawer(false); if (inspecting) setInspect(false); }}
           onClear={() => clearCaptured()}
           onRefreshStorage={() => web()?.injectJavaScript('window.__psStorage && window.__psStorage(); true;')}
           onRefreshPerf={() => web()?.injectJavaScript('window.__psPerf && window.__psPerf(); true;')}

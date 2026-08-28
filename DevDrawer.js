@@ -17,7 +17,7 @@ const rate = (k, v) => {
 };
 const fmtBytes = (b) => (b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.round(b / 1024) + ' KB');
 
-const TABS = ['Network', 'Console', 'Storage', 'Perf'];
+const TABS = ['Network', 'Console', 'Element', 'Audit', 'Storage', 'Perf'];
 const SCREEN = Dimensions.get('window').height;
 const MIN_H = 180;
 
@@ -71,9 +71,15 @@ export function ScopeTrace({ reqs, open, onPress }) {
   );
 }
 
-export default function DevDrawer({ reqs, logs, storage, perf, height, setHeight, onClose, onRefreshStorage, onRefreshPerf, onEval, onClear }) {
+export default function DevDrawer({
+  reqs, logs, storage, perf, element, audit,
+  height, setHeight, onClose, onRefreshStorage, onRefreshPerf, onRefreshAudit,
+  onEval, onClear, inspecting, onToggleInspect,
+}) {
   const [tab, setTab] = useState('Network');
   const [sel, setSel] = useState(null);
+  const [filter, setFilter] = useState('');
+  const [onlyFailed, setOnlyFailed] = useState(false);
   const start = useRef(height);
 
   const pan = useMemo(() => PanResponder.create({
@@ -90,6 +96,7 @@ export default function DevDrawer({ reqs, logs, storage, perf, height, setHeight
       <View {...pan.panHandlers} style={d.grip}><View style={d.gripBar} /></View>
 
       <View style={d.tabs}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ alignItems: 'center' }}>
         {TABS.map((x) => (
           <Pressable
             key={x}
@@ -97,11 +104,14 @@ export default function DevDrawer({ reqs, logs, storage, perf, height, setHeight
               setSel(null); setTab(x);
               if (x === 'Storage') onRefreshStorage();
               if (x === 'Perf') onRefreshPerf();
+              if (x === 'Audit') onRefreshAudit();
+              if (x === 'Element' && !inspecting) onToggleInspect(true);
             }}
             style={[d.tab, tab === x && d.tabOn]}>
             <Text style={[d.tabText, tab === x && d.tabTextOn]}>{x.toUpperCase()}</Text>
           </Pressable>
         ))}
+        </ScrollView>
         <View style={d.tabActions}>
           <Pressable onPress={onClear} hitSlop={8} style={d.iconBtn}>
             <Icon name="ban-outline" size={16} color={C.dim} />
@@ -115,10 +125,28 @@ export default function DevDrawer({ reqs, logs, storage, perf, height, setHeight
       {sel ? (
         <Detail req={sel} onBack={() => setSel(null)} onCopy={copy} />
       ) : tab === 'Network' ? (
+        <>
+        <View style={d.filterBar}>
+          <Icon name="search" size={12} color={C.dim} />
+          <TextInput
+            style={d.filterInput} value={filter} onChangeText={setFilter}
+            placeholder="Filter by URL, method or status" placeholderTextColor={C.dim}
+            autoCapitalize="none" autoCorrect={false} selectionColor={C.trace}
+          />
+          <Pressable onPress={() => setOnlyFailed(!onlyFailed)} hitSlop={6}
+                     style={[d.chip, onlyFailed && d.chipOn]}>
+            <Text style={[d.chipText, onlyFailed && { color: C.well }]}>Failed</Text>
+          </Pressable>
+        </View>
         <List
           follow
-          data={reqs}
-          empty="No requests yet. Load a page."
+          data={reqs.filter((r) => {
+            if (onlyFailed && r.status && r.status < 400) return false;
+            if (!filter) return true;
+            const q = filter.toLowerCase();
+            return (r.url + ' ' + r.method + ' ' + (r.status || '')).toLowerCase().includes(q);
+          })}
+          empty={filter || onlyFailed ? 'Nothing matches that filter.' : 'No requests yet. Load a page.'}
           render={(r) => {
             const { path } = shortPath(r.url);
             return (
@@ -132,6 +160,11 @@ export default function DevDrawer({ reqs, logs, storage, perf, height, setHeight
             );
           }}
         />
+        </>
+      ) : tab === 'Element' ? (
+        <ElementPanel element={element} inspecting={inspecting} onToggle={onToggleInspect} onCopy={copy} />
+      ) : tab === 'Audit' ? (
+        <AuditPanel audit={audit} onRefresh={onRefreshAudit} />
       ) : tab === 'Console' ? (
         <>
           <List
@@ -283,6 +316,92 @@ function Perf({ perf, onRefresh }) {
   );
 }
 
+function ElementPanel({ element, inspecting, onToggle, onCopy }) {
+  return (
+    <View style={{ flex: 1 }}>
+      <View style={d.inspectBar}>
+        <Pressable onPress={() => onToggle(!inspecting)} style={[d.inspectBtn, inspecting && d.inspectOn]}>
+          <Icon name="scan-outline" size={14} color={inspecting ? C.well : C.trace} />
+          <Text style={[d.inspectText, inspecting && { color: C.well }]}>
+            {inspecting ? 'Tap any element' : 'Start inspecting'}
+          </Text>
+        </Pressable>
+        {!!element && (
+          <Pressable onPress={() => onCopy(element.html)} hitSlop={8} style={d.iconBtn}>
+            <Icon name="copy-outline" size={15} color={C.dim} />
+          </Pressable>
+        )}
+      </View>
+      {!element ? (
+        <View style={d.emptyWrap}>
+          <Text style={d.empty}>
+            {inspecting ? 'Tap something on the page.' : 'Turn on inspecting, then tap an element.'}
+          </Text>
+        </View>
+      ) : (
+        <ScrollView style={d.list} contentContainerStyle={{ padding: S.md, paddingBottom: S.xl }}>
+          <Text style={d.elSel} selectable>{element.sel}</Text>
+          <Text style={d.elPath} selectable>{element.path}</Text>
+          <View style={d.boxRow}>
+            <Metric label="width" value={element.rect.w + 'px'} />
+            <Metric label="height" value={element.rect.h + 'px'} />
+            <Metric label="x" value={element.rect.x} />
+            <Metric label="y" value={element.rect.y} />
+          </View>
+          {!!element.text && <><Text style={d.section}>TEXT</Text>
+            <Text style={d.detailLine} selectable>{element.text}</Text></>}
+          <Text style={d.section}>COMPUTED</Text>
+          {Object.entries(element.styles).map(([k, v]) => (
+            <View key={k} style={d.styleRow}>
+              <Text style={d.styleKey}>{k}</Text>
+              <Text style={d.styleVal} selectable>{v}</Text>
+            </View>
+          ))}
+          <Text style={d.section}>HTML</Text>
+          <Text style={d.detailLine} selectable>{element.html}</Text>
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+
+function Metric({ label, value }) {
+  return (
+    <View style={d.boxCell}>
+      <Text style={d.boxVal}>{value}</Text>
+      <Text style={d.boxLabel}>{label}</Text>
+    </View>
+  );
+}
+
+const LEVEL = { fail: C.fail, warn: C.warn, info: C.trace, pass: C.live };
+
+function AuditPanel({ audit, onRefresh }) {
+  if (!audit) return <View style={d.emptyWrap}><Text style={d.empty}>Reading the page…</Text></View>;
+  const fails = audit.filter((a) => a.level === 'fail').length;
+  const warns = audit.filter((a) => a.level === 'warn').length;
+  return (
+    <ScrollView style={d.list} contentContainerStyle={{ paddingBottom: S.xl }}>
+      <View style={d.auditHead}>
+        <Text style={[d.auditCount, { color: fails ? C.fail : C.live }]}>{fails} failing</Text>
+        <Text style={[d.auditCount, { color: warns ? C.warn : C.dim }]}>{warns} warnings</Text>
+        <Pressable onPress={onRefresh} hitSlop={8} style={{ marginLeft: 'auto' }}>
+          <Icon name="refresh" size={14} color={C.dim} />
+        </Pressable>
+      </View>
+      {audit.map((a, i) => (
+        <View key={i} style={d.row}>
+          <View style={[d.rail, { backgroundColor: LEVEL[a.level] || C.edge }]} />
+          <View style={{ flex: 1 }}>
+            <Text style={[d.auditTitle, { color: LEVEL[a.level] || C.read }]}>{a.title}</Text>
+            <Text style={d.auditDetail}>{a.detail}</Text>
+          </View>
+        </View>
+      ))}
+    </ScrollView>
+  );
+}
+
 function List({ data, render, empty, follow }) {
   const ref = useRef(null);
   const pinned = useRef(true);   // stop following once the user scrolls up to read
@@ -412,7 +531,50 @@ const d = StyleSheet.create({
     fontFamily: F.sansMed, fontSize: 9, letterSpacing: 1.1, color: C.dim,
     marginTop: S.lg, marginBottom: S.sm,
   },
-  detailLine: { fontFamily: F.mono, fontSize: 10, color: C.read, lineHeight: 15 },
+  detailLine: { fontFamily: F.mono, fontSize: 10, color: C.read, lineHeight: 15, paddingHorizontal: S.md },
+  filterBar: {
+    flexDirection: 'row', alignItems: 'center', gap: S.sm,
+    paddingHorizontal: S.md, paddingVertical: S.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.chassis,
+  },
+  filterInput: { flex: 1, fontFamily: F.mono, fontSize: 11, color: C.read, padding: 0, height: 24 },
+  chip: {
+    paddingHorizontal: S.sm, paddingVertical: 3, borderRadius: 3,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: C.edge,
+  },
+  chipOn: { backgroundColor: C.fail, borderColor: C.fail },
+  chipText: { fontFamily: F.sansMed, fontSize: 10, color: C.dim },
+  inspectBar: {
+    flexDirection: 'row', alignItems: 'center', gap: S.sm, padding: S.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.chassis,
+  },
+  inspectBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 8, borderRadius: 4,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: C.trace,
+  },
+  inspectOn: { backgroundColor: C.trace, borderColor: C.trace },
+  inspectText: { fontFamily: F.sansBold, fontSize: 11, color: C.trace },
+  elSel: { fontFamily: F.monoMed, fontSize: 14, color: C.trace },
+  elPath: { fontFamily: F.mono, fontSize: 10, color: C.dim, marginTop: 3, lineHeight: 15 },
+  boxRow: { flexDirection: 'row', gap: S.sm, marginTop: S.md },
+  boxCell: {
+    flex: 1, alignItems: 'center', paddingVertical: S.sm, borderRadius: 4,
+    backgroundColor: C.chassis, borderWidth: StyleSheet.hairlineWidth, borderColor: C.edge,
+  },
+  boxVal: { fontFamily: F.monoMed, fontSize: 12, color: C.read },
+  boxLabel: { fontFamily: F.sans, fontSize: 9, color: C.dim, marginTop: 2 },
+  styleRow: { flexDirection: 'row', paddingVertical: 3 },
+  styleKey: { width: '42%', fontFamily: F.mono, fontSize: 10, color: C.dim },
+  styleVal: { flex: 1, fontFamily: F.mono, fontSize: 10, color: C.read },
+  auditHead: {
+    flexDirection: 'row', alignItems: 'center', gap: S.md,
+    paddingHorizontal: S.md, paddingVertical: S.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.chassis,
+  },
+  auditCount: { fontFamily: F.monoMed, fontSize: 11 },
+  auditTitle: { fontFamily: F.sansMed, fontSize: 12 },
+  auditDetail: { fontFamily: F.sans, fontSize: 11, color: C.dim, marginTop: 2, lineHeight: 16 },
   prompt: {
     flexDirection: 'row', alignItems: 'center', gap: S.sm,
     paddingHorizontal: S.md, paddingVertical: S.sm,
