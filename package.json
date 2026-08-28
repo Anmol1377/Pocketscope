@@ -25,7 +25,8 @@
     "sync:startpage": "node -e \"const fs=require('fs');fs.writeFileSync('startpage.js','// GENERATED from docs/index.html - run npm run sync:startpage after editing that file.\\nexport default '+JSON.stringify(fs.readFileSync('docs/index.html','utf8'))+';\\n')\"",
     "emu": "ANDROID_HOME=/opt/homebrew/share/android-commandlinetools /opt/homebrew/share/android-commandlinetools/emulator/emulator -avd ps -no-snapshot-save -no-audio -gpu swiftshader_indirect",
     "emu:install": "/opt/homebrew/share/android-commandlinetools/platform-tools/adb install -r",
-    "shot": "/opt/homebrew/share/android-commandlinetools/platform-tools/adb shell screencap -p /sdcard/s.png && /opt/homebrew/share/android-commandlinetools/platform-tools/adb pull /sdcard/s.png ./shot.png"
+    "shot": "/opt/homebrew/share/android-commandlinetools/platform-tools/adb shell screencap -p /sdcard/s.png && /opt/homebrew/share/android-commandlinetools/platform-tools/adb pull /sdcard/s.png ./shot.png",
+    "test": "node test-normalize.js"
   },
   "private": true
 }

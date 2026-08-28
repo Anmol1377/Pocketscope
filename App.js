@@ -98,7 +98,12 @@ function App() {
     }
   }, []);
 
-  const go = (text) => { setUrl(normalize(String(text).trim())); setEditing(false); setPerf(null); };
+  const go = (text) => {
+    const t = String(text).trim();
+    setUrl(t === START ? START : normalize(t));   // the sentinel is not a searchable string
+    setEditing(false);
+    setPerf(null);
+  };
   const refreshStorage = () => web.current?.injectJavaScript('window.__psStorage && window.__psStorage(); true;');
   const refreshPerf = () => web.current?.injectJavaScript('window.__psPerf && window.__psPerf(); true;');
   const evalJs = (code) => {
