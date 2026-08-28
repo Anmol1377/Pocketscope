@@ -10,7 +10,9 @@ import START_HTML from './startpage';
 import DevDrawer, { ScopeTrace, toCurl } from './DevDrawer';
 import { C, F, S } from './theme';
 
-const START = 'about:start';   // the bundled start page, works offline
+const START = 'about:start';        // the bundled start page, works offline
+const START_BASE = 'https://pocketscope.local/';   // only a baseUrl for relative links
+const isStart = (u) => !u || u === START || u.startsWith(START_BASE);
 const HOMES = {
   pocketscope: { url: START,                     label: 'Pocketscope start page' },
   google:      { url: 'https://www.google.com/', label: 'Google' },
@@ -23,7 +25,7 @@ const normalize = (t) =>
   : 'https://www.google.com/search?q=' + encodeURIComponent(t);
 
 const hostOf = (u) => {
-  if (!u || u === START) return 'Pocketscope';
+  if (isStart(u)) return 'Pocketscope';
   try { return new URL(u).host.replace(/^www\./, ''); } catch { return u; }
 };
 
@@ -133,9 +135,9 @@ function App() {
       <View style={s.top}>
         <View style={s.urlWrap}>
           <Icon
-            name={!nav.url || nav.url.startsWith('https') ? 'lock-closed' : 'warning'}
+            name={isStart(nav.url) ? 'terminal-outline' : nav.url.startsWith('https') ? 'lock-closed' : 'warning'}
             size={11}
-            color={!nav.url || nav.url.startsWith('https') ? C.dim : C.warn}
+            color={isStart(nav.url) ? C.trace : nav.url.startsWith('https') ? C.dim : C.warn}
           />
           <TextInput
             style={s.input}
@@ -163,14 +165,14 @@ function App() {
 
       <WebView
         ref={web}
-        source={url === START ? { html: START_HTML, baseUrl: 'https://pocketscope.local/' } : { uri: url }}
+        source={url === START ? { html: START_HTML, baseUrl: START_BASE } : { uri: url }}
         injectedJavaScriptBeforeContentLoaded={AGENT}
         injectedJavaScript={AGENT}
         onMessage={onMessage}
         onLoadProgress={(e) => setProgress(e.nativeEvent.progress)}
         onNavigationStateChange={(n) => {
           setNav({ url: n.url, canGoBack: n.canGoBack, canGoForward: n.canGoForward, loading: n.loading });
-          if (!editing) setInput(n.url.startsWith('https://pocketscope.local') ? '' : n.url);
+          if (!editing) setInput(isStart(n.url) ? '' : n.url);
         }}
         originWhitelist={['*']}
         javaScriptEnabled domStorageEnabled thirdPartyCookiesEnabled pullToRefreshEnabled
