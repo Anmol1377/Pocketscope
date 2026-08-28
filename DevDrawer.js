@@ -71,7 +71,7 @@ export function ScopeTrace({ reqs, open, onPress }) {
   );
 }
 
-export default function DevDrawer({ reqs, logs, storage, perf, height, setHeight, onClose, onRefreshStorage, onRefreshPerf, onEval }) {
+export default function DevDrawer({ reqs, logs, storage, perf, height, setHeight, onClose, onRefreshStorage, onRefreshPerf, onEval, onClear }) {
   const [tab, setTab] = useState('Network');
   const [sel, setSel] = useState(null);
   const start = useRef(height);
@@ -102,9 +102,14 @@ export default function DevDrawer({ reqs, logs, storage, perf, height, setHeight
             <Text style={[d.tabText, tab === x && d.tabTextOn]}>{x.toUpperCase()}</Text>
           </Pressable>
         ))}
-        <Pressable onPress={onClose} style={d.close} hitSlop={8}>
-          <Icon name="close" size={17} color={C.dim} />
-        </Pressable>
+        <View style={d.tabActions}>
+          <Pressable onPress={onClear} hitSlop={8} style={d.iconBtn}>
+            <Icon name="ban-outline" size={16} color={C.dim} />
+          </Pressable>
+          <Pressable onPress={onClose} hitSlop={8} style={d.iconBtn}>
+            <Icon name="close" size={17} color={C.dim} />
+          </Pressable>
+        </View>
       </View>
 
       {sel ? (
@@ -371,7 +376,8 @@ const d = StyleSheet.create({
   tabOn: { borderBottomColor: C.trace },
   tabText: { fontFamily: F.sansMed, fontSize: 10, letterSpacing: 1.1, color: C.dim },
   tabTextOn: { color: C.read },
-  close: { marginLeft: 'auto', padding: S.sm },
+  tabActions: { marginLeft: 'auto', flexDirection: 'row', alignItems: 'center' },
+  iconBtn: { padding: S.sm },
   list: { flex: 1 },
   row: {
     flexDirection: 'row', alignItems: 'center', paddingVertical: 7, paddingRight: S.md,

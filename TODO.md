@@ -33,6 +33,12 @@ See [BUILD.md](BUILD.md) for the reasoning behind the order.
 - Console prompt used `eval()`, which strict-CSP sites ('unsafe-eval' not allowed) refuse —
   github.com among them. The source is now injected directly instead of eval'd.
 - Console list did not scroll to the newest entry, so results appeared below the fold.
+- `{...StyleSheet.absoluteFillObject}` spread to nothing, so every "absolute" overlay
+  laid out in normal flow — the WebView and all full-screen screens rendered blank or
+  stacked. Positions are now written out explicitly.
+- Writing the WebView's reported url back into the prop that drives `source` made it
+  re-issue the load; the start page's baseUrl then failed as a real DNS lookup. A tab
+  now tracks `src` (what we asked for) separately from `url` (where it is).
 
 ## Next — publish the landing page
 
@@ -41,14 +47,21 @@ See [BUILD.md](BUILD.md) for the reasoning behind the order.
 - [ ] Confirm https://anmol1377.github.io/Pocketscope/ resolves (the app's default start page)
 - [ ] Add repo description and topics
 
-## Step 1 — browser shell
+## Step 1 — browser shell ✅
 
-- [ ] History, backed by AsyncStorage (already installed)
-- [ ] Bookmarks
-- [ ] Tabs
-- [ ] Desktop user-agent toggle
+- [x] Tabs, kept mounted so state survives a switch
+- [x] Private tabs (`incognito`) — no cookies or history kept, amber rule on the toolbar
+- [x] History, searchable, backed by AsyncStorage
+- [x] Bookmarks, searchable
+- [x] Downloads — handed to Android's download manager, no file-system module needed
+- [x] Clear browsing data — cache, cookies, form data, storage, history, downloads
+- [x] Settings screen — start page, desktop UA, keep-log, clear data
+- [x] Captured data is per tab and clears on each page load (toggle to keep it)
+- [x] Clear button in the drawer; Eruda opens in dark theme
+
 - [ ] Find in page
 - [ ] Command history in the console prompt (up-arrow recall)
+- [ ] Tab thumbnails
 
 ## Step 2 — ship it
 

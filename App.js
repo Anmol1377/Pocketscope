@@ -1,23 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet, StatusBar,
-  BackHandler, Share, Platform, Modal,
+  BackHandler, Share, Platform, Modal, ScrollView, Linking, Alert,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { getItem, setItem, useOptionalFonts, Icon, SafeAreaHost, useInsets } from './native';
 import AGENT from './agent';
 import START_HTML from './startpage';
 import DevDrawer, { ScopeTrace, toCurl } from './DevDrawer';
+import { Tabs, UrlList, Settings } from './Screens';
+import { usePersistedList } from './store';
+import { getItem, setItem, useOptionalFonts, Icon, SafeAreaHost, useInsets } from './native';
 import { C, F, S } from './theme';
 
-const START = 'about:start';        // the bundled start page, works offline
-const START_BASE = 'https://pocketscope.local/';   // only a baseUrl for relative links
+const START = 'about:start';
+const START_BASE = 'https://pocketscope.local/';
 const isStart = (u) => !u || u === START || u.startsWith(START_BASE);
+
 const HOMES = {
   pocketscope: { url: START,                     label: 'Pocketscope start page' },
   google:      { url: 'https://www.google.com/', label: 'Google' },
 };
-const HOME_KEY = 'ps.home';
+const HOME_KEY = 'ps.home', PRESERVE_KEY = 'ps.preserve', UA_KEY = 'ps.ua';
+const DESKTOP_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 
 const normalize = (t) =>
   /^https?:\/\//.test(t) ? t
@@ -29,125 +34,192 @@ const hostOf = (u) => {
   try { return new URL(u).host.replace(/^www\./, ''); } catch { return u; }
 };
 
+const DOWNLOADABLE = /\.(zip|apk|pdf|dmg|exe|mp4|mp3|csv|xlsx?|docx?|pptx?|tar|gz|7z|iso|deb|rpm)(\?|$)/i;
+const blankData = () => ({ reqs: [], logs: [], storage: [], perf: null });
+
 export default function Root() {
   return <SafeAreaHost><App /></SafeAreaHost>;
 }
 
 function App() {
   const insets = useInsets();
-  const web = useRef(null);
-  const seq = useRef(0);   // page-local ids reset on navigation; React keys must not
+  const webs = useRef({});          // tab id -> WebView ref
+  const seq = useRef(0);            // monotonic React keys; page ids reset per navigation
+  const nextTabId = useRef(2);
 
-  useOptionalFonts();   // cosmetic — the UI renders with or without them
+  useOptionalFonts();
 
-  const [homeKey, setHomeKey] = useState('pocketscope');
   const [booted, setBooted] = useState(false);
-  const [url, setUrl] = useState(null);
+  const [homeKey, setHomeKey] = useState('pocketscope');
+  const [preserveLog, setPreserveLog] = useState(false);
+  const [desktopUA, setDesktopUA] = useState(false);
+
+  const [tabs, setTabs] = useState([]);
+  const [activeId, setActiveId] = useState(1);
+  const [data, setData] = useState({ 1: blankData() });   // per tab — never mixed between pages
+
   const [input, setInput] = useState('');
   const [editing, setEditing] = useState(false);
-  const [nav, setNav] = useState({ url: '', canGoBack: false, canGoForward: false, loading: false });
-  const [progress, setProgress] = useState(0);
-
-  const [reqs, setReqs] = useState([]);
-  const [logs, setLogs] = useState([]);
-  const [storage, setStorage] = useState([]);
-  const [perf, setPerf] = useState(null);
   const [drawer, setDrawer] = useState(false);
-  const [drawerH, setDrawerH] = useState(300);
-  const [settings, setSettings] = useState(false);
+  const [drawerH, setDrawerH] = useState(320);
+  const [screen, setScreen] = useState(null);   // tabs | history | bookmarks | downloads | settings
+  const [menu, setMenu] = useState(false);
 
-  // Restore the chosen start page before the first load, so it isn't overwritten.
+  const history = usePersistedList('ps.history', 300);
+  const bookmarks = usePersistedList('ps.bookmarks', 200);
+  const downloads = usePersistedList('ps.downloads', 100);
+
+  const tab = tabs.find((t) => t.id === activeId) || tabs[0];
+  const web = () => webs.current[activeId];
+  const d = data[activeId] || blankData();
+
   useEffect(() => {
-    getItem(HOME_KEY).then((k) => {
-      const key = HOMES[k] ? k : 'pocketscope';
+    Promise.all([getItem(HOME_KEY), getItem(PRESERVE_KEY), getItem(UA_KEY)]).then(([h, p, u]) => {
+      const key = HOMES[h] ? h : 'pocketscope';
       setHomeKey(key);
-      setUrl(HOMES[key].url);
+      setPreserveLog(p === '1');
+      setDesktopUA(u === '1');
+      setTabs([{ id: 1, src: HOMES[key].url, url: HOMES[key].url, title: 'Pocketscope',
+                 private: false, canGoBack: false, canGoForward: false, loading: false, progress: 0 }]);
       setBooted(true);
     });
   }, []);
 
-  const chooseHome = async (key) => {
-    setHomeKey(key);
-    await setItem(HOME_KEY, key);
-    setSettings(false);
-    go(HOMES[key].url);
-  };
+  const patchTab = useCallback((id, patch) =>
+    setTabs((ts) => ts.map((t) => (t.id === id ? { ...t, ...patch } : t))), []);
+
+  const patchData = useCallback((id, fn) =>
+    setData((all) => ({ ...all, [id]: fn(all[id] || blankData()) })), []);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (menu) { setMenu(false); return true; }
+      if (screen) { setScreen(null); return true; }
       if (drawer) { setDrawer(false); return true; }
-      if (nav.canGoBack) { web.current?.goBack(); return true; }
+      if (tab?.canGoBack) { web()?.goBack(); return true; }
       return false;
     });
     return () => sub.remove();
-  }, [nav.canGoBack, drawer]);
+  }, [tab?.canGoBack, drawer, screen, menu, activeId]);
 
-  const onMessage = useCallback((e) => {
+  const onMessage = useCallback((id, e) => {
     let m; try { m = JSON.parse(e.nativeEvent.data); } catch { return; }
-    const key = ++seq.current;   // computed outside the updater — updaters must stay pure
-    if (m.t === 'net') setReqs((r) => [...r.slice(-299), { ...m, key }]);
-    else if (m.t === 'log') setLogs((l) => [...l.slice(-299), { ...m, key }]);
-    else if (m.t === 'perf') setPerf(m);
+    const key = ++seq.current;
+    if (m.t === 'net')       patchData(id, (s) => ({ ...s, reqs: [...s.reqs.slice(-299), { ...m, key }] }));
+    else if (m.t === 'log')  patchData(id, (s) => ({ ...s, logs: [...s.logs.slice(-299), { ...m, key }] }));
+    else if (m.t === 'perf') patchData(id, (s) => ({ ...s, perf: m }));
     else if (m.t === 'storage') {
-      setStorage([
+      patchData(id, (s) => ({ ...s, storage: [
         ...m.local.map((x) => ({ ...x, scope: 'local' })),
         ...m.session.map((x) => ({ ...x, scope: 'session' })),
         ...m.cookies.map((x) => ({ ...x, scope: 'cookie' })),
-      ]);
+      ] }));
     }
-  }, []);
+  }, [patchData]);
 
-  const go = (text) => {
+  const go = (text, id = activeId) => {
     const t = String(text).trim();
-    setUrl(t === START ? START : normalize(t));   // the sentinel is not a searchable string
+    const next = t === START ? START : normalize(t);
+    patchTab(id, { src: next, url: next });
     setEditing(false);
-    setPerf(null);
+    setScreen(null);
+    setMenu(false);
   };
-  const refreshStorage = () => web.current?.injectJavaScript('window.__psStorage && window.__psStorage(); true;');
-  const refreshPerf = () => web.current?.injectJavaScript('window.__psPerf && window.__psPerf(); true;');
+
+  const newTab = (isPrivate = false, url = HOMES[homeKey].url) => {
+    const id = nextTabId.current++;
+    setTabs((ts) => [...ts, { id, src: url, url, title: isPrivate ? 'Private tab' : 'New tab',
+                              private: isPrivate, canGoBack: false, canGoForward: false,
+                              loading: false, progress: 0 }]);
+    setData((all) => ({ ...all, [id]: blankData() }));
+    setActiveId(id);
+    setScreen(null);
+    setMenu(false);
+  };
+
+  const closeTab = (id) => {
+    setTabs((ts) => {
+      const left = ts.filter((t) => t.id !== id);
+      if (!left.length) {
+        const fresh = { id: nextTabId.current++, src: HOMES[homeKey].url, url: HOMES[homeKey].url,
+                        title: 'Pocketscope', private: false, canGoBack: false, canGoForward: false,
+                        loading: false, progress: 0 };
+        setActiveId(fresh.id);
+        setData({ [fresh.id]: blankData() });
+        return [fresh];
+      }
+      if (id === activeId) setActiveId(left[left.length - 1].id);
+      return left;
+    });
+    setData((all) => { const n = { ...all }; delete n[id]; return n; });
+    delete webs.current[id];
+  };
+
+  const clearCaptured = (id = activeId) => patchData(id, () => blankData());
+
+  const clearBrowsingData = () => {
+    Alert.alert('Clear browsing data?', 'Cache, cookies, form data, history and downloads. Bookmarks are kept.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Clear', style: 'destructive', onPress: () => {
+        Object.values(webs.current).forEach((r) => {
+          try { r?.clearCache?.(true); r?.clearHistory?.(); r?.clearFormData?.(); } catch {}
+        });
+        web()?.injectJavaScript(
+          'try{localStorage.clear();sessionStorage.clear();' +
+          "document.cookie.split(';').forEach(function(c){document.cookie=c.split('=')[0]+'=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/'})}catch(e){}; true;"
+        );
+        history.clear(); downloads.clear();
+        setData({ [activeId]: blankData() });
+        setScreen(null);
+      } },
+    ]);
+  };
+
   const evalJs = (code) => {
-    setLogs((l) => [...l.slice(-299), { t: 'log', level: 'input', text: '> ' + code, key: ++seq.current }]);
-    // Inject the source directly instead of eval()-ing a string: strict-CSP pages
-    // ('unsafe-eval' not allowed) reject eval, and most real sites set one.
+    const key = ++seq.current;
+    patchData(activeId, (s) => ({ ...s, logs: [...s.logs.slice(-299), { level: 'input', text: '> ' + code, key }] }));
     const isStatement = /^\s*(var|let|const|function|class|if|for|while|do|switch|try|throw|return)\b/.test(code);
     const body = isStatement ? code : 'return (' + code + ')';
-    web.current?.injectJavaScript(
+    web()?.injectJavaScript(
       '(function(){try{window.__psResult((function(){' + body + '})())}' +
       'catch(e){window.__psError(String(e))}})(); true;'
     );
   };
-  const openEruda = () =>
-    web.current?.injectJavaScript('window.__psEruda && window.__psEruda(); true;');
 
   const shareSession = async () => {
-    const body = reqs.length
-      ? reqs.map((r) => `${r.status || 'ERR'}  ${r.method} ${r.url}  ${r.ms}ms\n${toCurl(r)}`).join('\n\n')
+    setMenu(false);
+    const body = d.reqs.length
+      ? d.reqs.map((r) => `${r.status || 'ERR'}  ${r.method} ${r.url}  ${r.ms}ms\n${toCurl(r)}`).join('\n\n')
       : 'No requests captured.';
-    await Share.share({ message: `Pocketscope — ${nav.url}\n\n${body}` });
+    await Share.share({ message: `Pocketscope — ${tab?.url}\n\n${body}` });
   };
 
-  if (!booted) {
+  const setPref = (key, value, setter) => { setter(value); setItem(key, value === true ? '1' : value === false ? '0' : value); };
+
+  if (!booted || !tab) {
     return <View style={[s.root, s.boot]}><Text style={s.bootMark}>▚</Text></View>;
   }
 
-  const failed = reqs.filter((r) => !r.status || r.status >= 400).length;
+  const failed = d.reqs.filter((r) => !r.status || r.status >= 400).length;
+  const bookmarked = bookmarks.items.some((b) => b.url === tab.url);
 
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
       <StatusBar barStyle="light-content" backgroundColor={C.chassis} />
 
-      <View style={s.top}>
+      <View style={[s.top, tab.private && s.topPrivate]}>
         <View style={s.urlWrap}>
           <Icon
-            name={isStart(nav.url) ? 'terminal-outline' : nav.url.startsWith('https') ? 'lock-closed' : 'warning'}
-            size={11}
-            color={isStart(nav.url) ? C.trace : nav.url.startsWith('https') ? C.dim : C.warn}
+            name={tab.private ? 'eye-off-outline' : isStart(tab.url) ? 'terminal-outline'
+                  : tab.url.startsWith('https') ? 'lock-closed' : 'warning'}
+            size={12}
+            color={tab.private ? C.warn : isStart(tab.url) ? C.trace : tab.url.startsWith('https') ? C.dim : C.warn}
           />
           <TextInput
             style={s.input}
-            value={editing ? input : hostOf(nav.url || url)}
-            onFocus={() => { setEditing(true); setInput(nav.url || url); }}
+            value={editing ? input : hostOf(tab.url)}
+            onFocus={() => { setEditing(true); setInput(isStart(tab.url) ? '' : tab.url); }}
             onBlur={() => setEditing(false)}
             onChangeText={setInput}
             onSubmitEditing={(e) => go(e.nativeEvent.text)}
@@ -157,85 +229,173 @@ function App() {
             placeholderTextColor={C.dim}
             selectionColor={C.trace}
           />
-          <Pressable
-            onPress={() => (nav.loading ? web.current?.stopLoading() : web.current?.reload())}
-            hitSlop={10}>
-            <Icon name={nav.loading ? 'close' : 'refresh'} size={15} color={C.dim} />
+          <Pressable onPress={() => (tab.loading ? web()?.stopLoading() : web()?.reload())} hitSlop={10}>
+            <Icon name={tab.loading ? 'close' : 'refresh'} size={15} color={C.dim} />
           </Pressable>
         </View>
         <View style={s.track}>
-          {progress > 0 && progress < 1 && <View style={[s.fill, { width: `${progress * 100}%` }]} />}
+          {tab.progress > 0 && tab.progress < 1 && (
+            <View style={[s.fill, { width: `${tab.progress * 100}%` }]} />
+          )}
         </View>
       </View>
 
-      <WebView
-        ref={web}
-        source={url === START ? { html: START_HTML, baseUrl: START_BASE } : { uri: url }}
-        injectedJavaScriptBeforeContentLoaded={AGENT}
-        injectedJavaScript={AGENT}
-        onMessage={onMessage}
-        onLoadProgress={(e) => setProgress(e.nativeEvent.progress)}
-        onNavigationStateChange={(n) => {
-          setNav({ url: n.url, canGoBack: n.canGoBack, canGoForward: n.canGoForward, loading: n.loading });
-          if (!editing) setInput(isStart(n.url) ? '' : n.url);
-        }}
-        originWhitelist={['*']}
-        javaScriptEnabled domStorageEnabled thirdPartyCookiesEnabled pullToRefreshEnabled
-        mixedContentMode="always"
-        setSupportMultipleWindows={false}
-        style={s.web}
-      />
+      <View style={s.stage}>
+        {tabs.map((t) => (
+          <View key={t.id} style={[s.page, t.id !== activeId && s.pageHidden]}>
+            <WebView
+              ref={(r) => { webs.current[t.id] = r; }}
+              source={t.src === START ? { html: START_HTML, baseUrl: START_BASE } : { uri: t.src }}
+              injectedJavaScriptBeforeContentLoaded={AGENT}
+              injectedJavaScript={AGENT}
+              onMessage={(e) => onMessage(t.id, e)}
+              incognito={t.private}
+              userAgent={desktopUA ? DESKTOP_UA : undefined}
+              onLoadStart={() => {
+                // A new document means the old readings describe a page that is gone.
+                if (!preserveLog) patchData(t.id, () => blankData());
+                else patchData(t.id, (x) => ({ ...x, perf: null }));
+              }}
+              onLoadProgress={(e) => patchTab(t.id, { progress: e.nativeEvent.progress })}
+              onNavigationStateChange={(n) => {
+                patchTab(t.id, {
+                  url: n.url, title: n.title || hostOf(n.url),
+                  canGoBack: n.canGoBack, canGoForward: n.canGoForward, loading: n.loading,
+                });   // deliberately not src: that would re-issue the load
+                if (t.id === activeId && !editing) setInput(isStart(n.url) ? '' : n.url);
+                if (!t.private && !n.loading && !isStart(n.url)) {
+                  history.add({ url: n.url, title: n.title || hostOf(n.url) });
+                }
+              }}
+              onShouldStartLoadWithRequest={(r) => {
+                if (DOWNLOADABLE.test(r.url)) {
+                  // No file-system module on board — hand the URL to Android's own
+                  // download manager rather than pulling in a native dependency.
+                  downloads.add({ url: r.url, title: r.url.split('/').pop() });
+                  Linking.openURL(r.url).catch(() => {});
+                  return false;
+                }
+                return true;
+              }}
+              originWhitelist={['*']}
+              javaScriptEnabled domStorageEnabled thirdPartyCookiesEnabled pullToRefreshEnabled
+              mixedContentMode="always"
+              setSupportMultipleWindows={false}
+              style={s.web}
+            />
+          </View>
+        ))}
+      </View>
 
-      <ScopeTrace reqs={reqs} open={drawer} onPress={() => setDrawer(!drawer)} />
+      <ScopeTrace reqs={d.reqs} open={drawer} onPress={() => setDrawer(!drawer)} />
 
       {drawer && (
         <DevDrawer
-          reqs={reqs} logs={logs} storage={storage} perf={perf}
+          reqs={d.reqs} logs={d.logs} storage={d.storage} perf={d.perf}
           height={drawerH} setHeight={setDrawerH}
           onClose={() => setDrawer(false)}
-          onRefreshStorage={refreshStorage}
-          onRefreshPerf={refreshPerf}
+          onClear={() => clearCaptured()}
+          onRefreshStorage={() => web()?.injectJavaScript('window.__psStorage && window.__psStorage(); true;')}
+          onRefreshPerf={() => web()?.injectJavaScript('window.__psPerf && window.__psPerf(); true;')}
           onEval={evalJs}
         />
       )}
 
       <View style={[s.bottom, { paddingBottom: insets.bottom || S.xs }]}>
-        <Nav icon="chevron-back"    disabled={!nav.canGoBack}    onPress={() => web.current?.goBack()} />
-        <Nav icon="chevron-forward" disabled={!nav.canGoForward} onPress={() => web.current?.goForward()} />
+        <Nav icon="chevron-back"    disabled={!tab.canGoBack}    onPress={() => web()?.goBack()} />
+        <Nav icon="chevron-forward" disabled={!tab.canGoForward} onPress={() => web()?.goForward()} />
         <Nav icon="home-outline"    onPress={() => go(HOMES[homeKey].url)} />
+        <Nav icon="copy-outline"    count={tabs.length} onPress={() => setScreen('tabs')} />
         <Nav icon="terminal-outline" active={drawer} badge={failed || null} onPress={() => setDrawer(!drawer)} />
-        <Nav icon="share-outline"   onPress={shareSession} onLongPress={openEruda} />
-        <Nav icon="ellipsis-horizontal" onPress={() => setSettings(true)} />
+        <Nav icon="ellipsis-horizontal" onPress={() => setMenu(true)} />
       </View>
 
-      <Modal visible={settings} transparent animationType="fade" onRequestClose={() => setSettings(false)}>
-        <Pressable style={s.scrim} onPress={() => setSettings(false)}>
-          <Pressable style={[s.sheet, { paddingBottom: insets.bottom + S.lg }]} onPress={() => {}}>
-            <Text style={s.sheetTitle}>START PAGE</Text>
-            {Object.entries(HOMES).map(([key, h]) => (
-              <Pressable key={key} onPress={() => chooseHome(key)} style={s.opt}>
-                <Icon
-                  name={homeKey === key ? 'radio-button-on' : 'radio-button-off'}
-                  size={17} color={homeKey === key ? C.trace : C.dim}
-                />
-                <View style={{ flex: 1 }}>
-                  <Text style={s.optLabel}>{h.label}</Text>
-                  <Text style={s.optUrl}>{hostOf(h.url)}</Text>
-                </View>
-              </Pressable>
-            ))}
-            <Text style={s.sheetTitle}>SESSION</Text>
-            <Pressable onPress={() => { setReqs([]); setLogs([]); setStorage([]); setSettings(false); }} style={s.opt}>
-              <Icon name="trash-outline" size={16} color={C.dim} />
-              <Text style={s.optLabel}>Clear captured data</Text>
-            </Pressable>
-            <Pressable onPress={() => { setSettings(false); openEruda(); }} style={s.opt}>
-              <Icon name="layers-outline" size={16} color={C.dim} />
-              <View style={{ flex: 1 }}>
-                <Text style={s.optLabel}>Open Eruda</Text>
-                <Text style={s.optUrl}>DOM inspector and full panels</Text>
-              </View>
-            </Pressable>
+      {!!screen && (
+        <View style={[s.overlay, { paddingBottom: insets.bottom }]}>
+      {screen === 'tabs' && (
+        <Tabs
+          topInset={insets.top}
+          tabs={tabs} activeId={activeId}
+          onPick={(id) => { setActiveId(id); setScreen(null); }}
+          onClose={() => setScreen(null)}
+          onCloseTab={closeTab}
+          onNew={() => newTab(false)}
+          onNewPrivate={() => newTab(true)}
+          onCloseAll={() => { tabs.forEach((t) => closeTab(t.id)); setScreen(null); }}
+        />
+      )}
+      {screen === 'history' && (
+        <UrlList
+          topInset={insets.top}
+          title="History" items={history.items} searchable
+          empty="Nothing here yet. Pages you visit outside private tabs appear here."
+          onClose={() => setScreen(null)} onOpen={(u) => go(u)}
+          onRemove={history.remove} onClear={history.clear}
+        />
+      )}
+      {screen === 'bookmarks' && (
+        <UrlList
+          topInset={insets.top}
+          title="Bookmarks" items={bookmarks.items} searchable
+          empty="No bookmarks. Add one from the ⋯ menu."
+          onClose={() => setScreen(null)} onOpen={(u) => go(u)}
+          onRemove={bookmarks.remove} onClear={bookmarks.clear}
+        />
+      )}
+      {screen === 'downloads' && (
+        <UrlList
+          topInset={insets.top}
+          title="Downloads" items={downloads.items}
+          empty="No downloads. Files are handed to Android's download manager."
+          onClose={() => setScreen(null)} onOpen={(u) => Linking.openURL(u).catch(() => {})}
+          onRemove={downloads.remove} onClear={downloads.clear}
+        />
+      )}
+      {screen === 'settings' && (
+        <Settings
+          topInset={insets.top}
+          homeKey={homeKey} homes={HOMES}
+          onPickHome={(k) => { setPref(HOME_KEY, k, setHomeKey); go(HOMES[k].url); }}
+          onClose={() => setScreen(null)}
+          onClearData={clearBrowsingData}
+          onClearCaptured={() => { clearCaptured(); setScreen(null); }}
+          preserveLog={preserveLog}
+          onTogglePreserve={() => setPref(PRESERVE_KEY, !preserveLog, setPreserveLog)}
+          desktopUA={desktopUA}
+          onToggleUA={() => { setPref(UA_KEY, !desktopUA, setDesktopUA); setTimeout(() => web()?.reload(), 60); }}
+        />
+      )}
+
+        </View>
+      )}
+
+      <Modal visible={menu} transparent animationType="fade" onRequestClose={() => setMenu(false)}>
+        <Pressable style={s.scrim} onPress={() => setMenu(false)}>
+          <Pressable style={[s.sheet, { paddingBottom: insets.bottom + S.md }]} onPress={() => {}}>
+            <View style={s.grabber} />
+            <ScrollView>
+              <MenuItem icon="add" label="New tab" onPress={() => newTab(false)} />
+              <MenuItem icon="eye-off-outline" label="New private tab"
+                        hint="No cookies or history kept" onPress={() => newTab(true)} />
+              <MenuItem
+                icon={bookmarked ? 'bookmark' : 'bookmark-outline'}
+                label={bookmarked ? 'Remove bookmark' : 'Add bookmark'}
+                onPress={() => {
+                  bookmarked ? bookmarks.remove(tab.url)
+                             : bookmarks.add({ url: tab.url, title: tab.title });
+                  setMenu(false);
+                }}
+              />
+              <MenuItem icon="bookmarks-outline" label="Bookmarks" onPress={() => { setMenu(false); setScreen('bookmarks'); }} />
+              <MenuItem icon="time-outline" label="History" onPress={() => { setMenu(false); setScreen('history'); }} />
+              <MenuItem icon="download-outline" label="Downloads" onPress={() => { setMenu(false); setScreen('downloads'); }} />
+              <MenuItem icon="share-outline" label="Share session"
+                        hint="Requests as cURL commands" onPress={shareSession} />
+              <MenuItem icon="layers-outline" label="Open Eruda"
+                        hint="DOM inspector and full panels"
+                        onPress={() => { setMenu(false); web()?.injectJavaScript('window.__psEruda && window.__psEruda(); true;'); }} />
+              <MenuItem icon="settings-outline" label="Settings" onPress={() => { setMenu(false); setScreen('settings'); }} />
+            </ScrollView>
           </Pressable>
         </Pressable>
       </Modal>
@@ -243,13 +403,24 @@ function App() {
   );
 }
 
-function Nav({ icon, onPress, onLongPress, disabled, active, badge }) {
+function MenuItem({ icon, label, hint, onPress }) {
   return (
-    <Pressable onPress={onPress} onLongPress={onLongPress} disabled={disabled} style={s.nav} hitSlop={4}>
+    <Pressable onPress={onPress} style={s.menuItem}>
+      <Icon name={icon} size={17} color={C.dim} />
+      <View style={{ flex: 1 }}>
+        <Text style={s.menuLabel}>{label}</Text>
+        {!!hint && <Text style={s.menuHint}>{hint}</Text>}
+      </View>
+    </Pressable>
+  );
+}
+
+function Nav({ icon, onPress, disabled, active, badge, count }) {
+  return (
+    <Pressable onPress={onPress} disabled={disabled} style={s.nav} hitSlop={4}>
       <Icon name={icon} size={21} color={disabled ? C.edge : active ? C.trace : C.read} />
-      {badge ? (
-        <View style={s.badge}><Text style={s.badgeText}>{badge > 99 ? '99+' : badge}</Text></View>
-      ) : null}
+      {count != null && <Text style={s.count}>{count}</Text>}
+      {badge ? <View style={s.badge}><Text style={s.badgeText}>{badge > 99 ? '99+' : badge}</Text></View> : null}
     </Pressable>
   );
 }
@@ -259,6 +430,7 @@ const s = StyleSheet.create({
   boot: { alignItems: 'center', justifyContent: 'center' },
   bootMark: { color: C.trace, fontSize: 28 },
   top: { backgroundColor: C.chassis },
+  topPrivate: { borderBottomWidth: 2, borderBottomColor: C.warn },
   urlWrap: {
     flexDirection: 'row', alignItems: 'center', gap: S.sm,
     marginHorizontal: S.sm, marginTop: S.sm,
@@ -268,30 +440,40 @@ const s = StyleSheet.create({
   input: { flex: 1, color: C.read, fontFamily: F.mono, fontSize: 13, padding: 0 },
   track: { height: 2, marginTop: S.sm },
   fill: { height: 2, backgroundColor: C.trace },
+  stage: { flex: 1 },
+  page: { flex: 1 },
+  pageHidden: { display: 'none' },   // keeps the tab mounted, so its state survives a switch
   web: { flex: 1, backgroundColor: '#fff' },
   bottom: {
-    flexDirection: 'row', alignItems: 'center', paddingTop: S.sm,
-    backgroundColor: C.chassis,
+    flexDirection: 'row', alignItems: 'center', paddingTop: S.sm, backgroundColor: C.chassis,
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.edge,
   },
   nav: { flex: 1, alignItems: 'center', justifyContent: 'center', height: 36 },
+  count: {
+    position: 'absolute', fontFamily: F.monoMed, fontSize: 9, color: C.read,
+    top: 11, alignSelf: 'center',
+  },
   badge: {
-    position: 'absolute', top: 0, right: '26%',
+    position: 'absolute', top: 0, right: '24%',
     minWidth: 15, height: 15, borderRadius: 8, paddingHorizontal: 3,
     backgroundColor: C.fail, alignItems: 'center', justifyContent: 'center',
   },
   badgeText: { fontFamily: F.monoMed, fontSize: 9, color: C.well },
+  overlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: C.well, zIndex: 20,
+  },
   scrim: { flex: 1, backgroundColor: '#000A', justifyContent: 'flex-end' },
   sheet: {
-    backgroundColor: C.chassis, paddingHorizontal: S.lg, paddingTop: S.lg,
+    maxHeight: '75%', backgroundColor: C.chassis, paddingTop: S.sm,
     borderTopLeftRadius: 12, borderTopRightRadius: 12,
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.edge,
   },
-  sheetTitle: {
-    fontFamily: F.sansMed, fontSize: 9, letterSpacing: 1.2, color: C.dim,
-    marginTop: S.md, marginBottom: S.sm,
+  grabber: { width: 34, height: 3, borderRadius: 2, backgroundColor: C.edge, alignSelf: 'center', marginBottom: S.sm },
+  menuItem: {
+    flexDirection: 'row', alignItems: 'center', gap: S.md,
+    paddingHorizontal: S.lg, paddingVertical: 13,
   },
-  opt: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingVertical: S.md },
-  optLabel: { fontFamily: F.sansMed, fontSize: 14, color: C.read },
-  optUrl: { fontFamily: F.mono, fontSize: 10, color: C.dim, marginTop: 2 },
+  menuLabel: { fontFamily: F.sansMed, fontSize: 14, color: C.read },
+  menuHint: { fontFamily: F.sans, fontSize: 11, color: C.dim, marginTop: 2 },
 });

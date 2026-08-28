@@ -175,7 +175,13 @@ export default String.raw`
     if (window.eruda) { try { eruda.show(); } catch (e) {} return; }
     var s = document.createElement('script');
     s.src = 'https://cdn.jsdelivr.net/npm/eruda';
-    s.onload = function () { try { eruda.init(); eruda.show(); } catch (e) {} };
+    s.onload = function () {
+      try {
+        eruda.init();
+        try { eruda.get('settings').set('theme', 'Dark'); } catch (e) {}
+        eruda.show();
+      } catch (e) {}
+    };
     s.onerror = function () { post({ t: 'sys', m: 'eruda blocked by this page' }); };
     (document.head || document.documentElement).appendChild(s);
   };
