@@ -20,7 +20,7 @@ const HOMES = {
   pocketscope: { url: START,                     label: 'Pocketscope start page' },
   google:      { url: 'https://www.google.com/', label: 'Google' },
 };
-const HOME_KEY = 'ps.home', PRESERVE_KEY = 'ps.preserve', UA_KEY = 'ps.ua';
+const HOME_KEY = 'ps.home', HOME_URL_KEY = 'ps.homeUrl', PRESERVE_KEY = 'ps.preserve', UA_KEY = 'ps.ua';
 const DESKTOP_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 
@@ -53,13 +53,16 @@ function App() {
   const [homeKey, setHomeKey] = useState('pocketscope');
   const [preserveLog, setPreserveLog] = useState(false);
   const [desktopUA, setDesktopUA] = useState(false);
+  const [customHome, setCustomHome] = useState('');
 
   const [tabs, setTabs] = useState([]);
   const [activeId, setActiveId] = useState(1);
   const [data, setData] = useState({ 1: blankData() });   // per tab — never mixed between pages
 
-  const [input, setInput] = useState('');
-  const [editing, setEditing] = useState(false);
+  // One source of truth for the address field. A ref (not state) tracks focus so
+  // callbacks never read a stale copy of it.
+  const [address, setAddress] = useState('');
+  const focused = useRef(false);
   const [drawer, setDrawer] = useState(false);
   const [drawerH, setDrawerH] = useState(320);
   const [screen, setScreen] = useState(null);   // tabs | history | bookmarks | downloads | settings
@@ -69,20 +72,28 @@ function App() {
   const bookmarks = usePersistedList('ps.bookmarks', 200);
   const downloads = usePersistedList('ps.downloads', 100);
 
+  const homeUrl = homeKey === 'custom'
+    ? (customHome ? normalize(customHome) : START)
+    : (HOMES[homeKey] || HOMES.pocketscope).url;
+
   const tab = tabs.find((t) => t.id === activeId) || tabs[0];
   const web = () => webs.current[activeId];
   const d = data[activeId] || blankData();
 
   useEffect(() => {
-    Promise.all([getItem(HOME_KEY), getItem(PRESERVE_KEY), getItem(UA_KEY)]).then(([h, p, u]) => {
-      const key = HOMES[h] ? h : 'pocketscope';
-      setHomeKey(key);
-      setPreserveLog(p === '1');
-      setDesktopUA(u === '1');
-      setTabs([{ id: 1, src: HOMES[key].url, url: HOMES[key].url, title: 'Pocketscope',
-                 private: false, canGoBack: false, canGoForward: false, loading: false, progress: 0 }]);
-      setBooted(true);
-    });
+    Promise.all([getItem(HOME_KEY), getItem(HOME_URL_KEY), getItem(PRESERVE_KEY), getItem(UA_KEY)])
+      .then(([h, hUrl, p, u]) => {
+        const key = HOMES[h] || h === 'custom' ? h : 'pocketscope';
+        const custom = hUrl || '';
+        setHomeKey(key);
+        setCustomHome(custom);
+        setPreserveLog(p === '1');
+        setDesktopUA(u === '1');
+        const first = key === 'custom' && custom ? normalize(custom) : (HOMES[key] || HOMES.pocketscope).url;
+        setTabs([{ id: 1, src: first, url: first, title: 'Pocketscope',
+                   private: false, canGoBack: false, canGoForward: false, loading: false, progress: 0 }]);
+        setBooted(true);
+      });
   }, []);
 
   const patchTab = useCallback((id, patch) =>
@@ -90,6 +101,10 @@ function App() {
 
   const patchData = useCallback((id, fn) =>
     setData((all) => ({ ...all, [id]: fn(all[id] || blankData()) })), []);
+
+  useEffect(() => {
+    if (!focused.current) setAddress(hostOf(tab?.url));
+  }, [tab?.url, activeId]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
@@ -122,12 +137,13 @@ function App() {
     const t = String(text).trim();
     const next = t === START ? START : normalize(t);
     patchTab(id, { src: next, url: next });
-    setEditing(false);
+    focused.current = false;
+    setAddress(hostOf(next));
     setScreen(null);
     setMenu(false);
   };
 
-  const newTab = (isPrivate = false, url = HOMES[homeKey].url) => {
+  const newTab = (isPrivate = false, url = homeUrl) => {
     const id = nextTabId.current++;
     setTabs((ts) => [...ts, { id, src: url, url, title: isPrivate ? 'Private tab' : 'New tab',
                               private: isPrivate, canGoBack: false, canGoForward: false,
@@ -142,7 +158,7 @@ function App() {
     setTabs((ts) => {
       const left = ts.filter((t) => t.id !== id);
       if (!left.length) {
-        const fresh = { id: nextTabId.current++, src: HOMES[homeKey].url, url: HOMES[homeKey].url,
+        const fresh = { id: nextTabId.current++, src: homeUrl, url: homeUrl,
                         title: 'Pocketscope', private: false, canGoBack: false, canGoForward: false,
                         loading: false, progress: 0 };
         setActiveId(fresh.id);
@@ -230,11 +246,11 @@ function App() {
           />
           <TextInput
             style={s.input}
-            value={editing ? input : hostOf(tab.url)}
-            onFocus={() => { setEditing(true); setInput(isStart(tab.url) ? '' : tab.url); }}
-            onBlur={() => setEditing(false)}
-            onChangeText={setInput}
-            onSubmitEditing={(e) => go(e.nativeEvent.text)}
+            value={address}
+            onFocus={() => { focused.current = true; setAddress(isStart(tab.url) ? '' : tab.url); }}
+            onBlur={() => { focused.current = false; setAddress(hostOf(tab.url)); }}
+            onChangeText={setAddress}
+            onSubmitEditing={(e) => { focused.current = false; go(e.nativeEvent.text); }}
             autoCapitalize="none" autoCorrect={false} keyboardType="url" returnKeyType="go"
             selectTextOnFocus
             placeholder="Search or enter address"
@@ -274,7 +290,7 @@ function App() {
                   url: n.url, title: n.title || hostOf(n.url),
                   canGoBack: n.canGoBack, canGoForward: n.canGoForward, loading: n.loading,
                 });   // deliberately not src: that would re-issue the load
-                if (t.id === activeId && !editing) setInput(isStart(n.url) ? '' : n.url);
+                if (t.id === activeId && !focused.current) setAddress(hostOf(n.url));
                 if (!t.private && !n.loading && !isStart(n.url)) {
                   history.add({ url: n.url, title: n.title || hostOf(n.url) });
                 }
@@ -316,7 +332,7 @@ function App() {
       <View style={[s.bottom, { paddingBottom: insets.bottom || S.xs }]}>
         <Nav icon="chevron-back"    disabled={!tab.canGoBack}    onPress={() => web()?.goBack()} />
         <Nav icon="chevron-forward" disabled={!tab.canGoForward} onPress={() => web()?.goForward()} />
-        <Nav icon="home-outline"    onPress={() => go(HOMES[homeKey].url)} />
+        <Nav icon="home-outline"    onPress={() => go(homeUrl)} />
         <Nav icon="copy-outline"    count={tabs.length} onPress={() => setScreen('tabs')} />
         <Nav icon="terminal-outline" active={drawer} badge={failed || null} onPress={() => setDrawer(!drawer)} />
         <Nav icon="ellipsis-horizontal" onPress={() => setMenu(true)} />
@@ -374,7 +390,17 @@ function App() {
         <Settings
           topInset={insets.top}
           homeKey={homeKey} homes={HOMES}
-          onPickHome={(k) => { setPref(HOME_KEY, k, setHomeKey); go(HOMES[k].url); }}
+          onPickHome={(k) => {
+            setPref(HOME_KEY, k, setHomeKey);
+            if (k !== 'custom') go(HOMES[k].url);
+            else if (customHome) go(normalize(customHome));
+          }}
+          customHome={customHome}
+          onSetCustomHome={(v) => {
+            const clean = String(v).trim();
+            setPref(HOME_URL_KEY, clean, setCustomHome);
+            if (clean) go(normalize(clean));
+          }}
           onClose={() => setScreen(null)}
           onClearData={() => setScreen('clear')}
           onClearCaptured={() => { clearCaptured(); setScreen(null); }}

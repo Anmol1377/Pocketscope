@@ -164,7 +164,30 @@ export function ClearData({ onClose, onClear, topInset }) {
 }
 
 /* ── Settings ─────────────────────────────────────────── */
-export function Settings({ homeKey, homes, onPickHome, onClose, onClearData, onClearCaptured, preserveLog, onTogglePreserve, desktopUA, onToggleUA, topInset }) {
+function CustomHome({ value, onSave }) {
+  const [draft, setDraft] = useState(value || '');
+  const dirty = draft.trim() !== (value || '');
+  return (
+    <View style={s.customWrap}>
+      <TextInput
+        style={s.customInput}
+        value={draft}
+        onChangeText={setDraft}
+        onSubmitEditing={() => onSave(draft)}
+        placeholder="example.com"
+        placeholderTextColor={C.dim}
+        autoCapitalize="none" autoCorrect={false} keyboardType="url" returnKeyType="done"
+        selectionColor={C.trace}
+      />
+      <Pressable onPress={() => onSave(draft)} disabled={!dirty}
+                 style={[s.customSave, !dirty && s.customSaveOff]}>
+        <Text style={[s.customSaveText, !dirty && { color: C.dim }]}>Save</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+export function Settings({ homeKey, homes, onPickHome, customHome, onSetCustomHome, onClose, onClearData, onClearCaptured, preserveLog, onTogglePreserve, desktopUA, onToggleUA, topInset }) {
   const Row = ({ icon, label, hint, right, onPress, danger }) => (
     <Pressable onPress={onPress} style={s.setRow}>
       <Icon name={icon} size={16} color={danger ? C.fail : C.dim} />
@@ -190,6 +213,13 @@ export function Settings({ homeKey, homes, onPickHome, onClose, onClearData, onC
             label={h.label} onPress={() => onPickHome(key)}
           />
         ))}
+        <Row
+          icon={homeKey === 'custom' ? 'radio-button-on' : 'radio-button-off'}
+          label="A page of your own"
+          hint={homeKey === 'custom' && customHome ? customHome : 'Any URL you like'}
+          onPress={() => onPickHome('custom')}
+        />
+        {homeKey === 'custom' && <CustomHome value={customHome} onSave={onSetCustomHome} />}
 
         <Text style={s.section}>BROWSING</Text>
         <Row icon="desktop-outline" label="Request desktop site"
@@ -254,6 +284,18 @@ const s = StyleSheet.create({
   footBtnGhost: { backgroundColor: 'transparent', borderWidth: StyleSheet.hairlineWidth, borderColor: C.warn },
   footBtnDanger: { backgroundColor: C.fail },
   footBtnOff: { backgroundColor: C.raised },
+  customWrap: {
+    flexDirection: 'row', alignItems: 'center', gap: S.sm,
+    paddingHorizontal: S.md, paddingBottom: S.md, paddingLeft: 48,
+  },
+  customInput: {
+    flex: 1, height: 36, borderRadius: 5, paddingHorizontal: S.md,
+    backgroundColor: C.raised, borderWidth: StyleSheet.hairlineWidth, borderColor: C.edge,
+    fontFamily: F.mono, fontSize: 12, color: C.read,
+  },
+  customSave: { backgroundColor: C.trace, paddingHorizontal: S.md, paddingVertical: 9, borderRadius: 5 },
+  customSaveOff: { backgroundColor: C.raised },
+  customSaveText: { fontFamily: F.sansBold, fontSize: 12, color: C.well },
   note: {
     fontFamily: F.sans, fontSize: 11, color: C.dim, lineHeight: 17,
     paddingHorizontal: S.md, paddingTop: S.lg,

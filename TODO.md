@@ -14,7 +14,7 @@ See [BUILD.md](BUILD.md) for the reasoning behind the order.
 - [x] Perf tab — Core Web Vitals, load timing, weight, slowest resources
 - [x] Console and Network follow the newest line (stop following when you scroll up)
 - [x] Instrument UI — IBM Plex, graphite palette, vector icons
-- [x] Start page setting — Pocketscope page or Google, persisted
+- [x] Start page setting — Pocketscope page, Google, or any URL of your own
 - [x] Landing page at [docs/index.html](docs/index.html), bundled into the app as the start page
 - [x] Android emulator set up locally (`npm run emu`) — no Android Studio
 - [x] **Verified on emulator:** captured real requests on github.com (4 × 200, timings, status rails)
@@ -33,6 +33,9 @@ See [BUILD.md](BUILD.md) for the reasoning behind the order.
 - Console prompt used `eval()`, which strict-CSP sites ('unsafe-eval' not allowed) refuse —
   github.com among them. The source is now injected directly instead of eval'd.
 - Console list did not scroll to the newest entry, so results appeared below the fold.
+- The address bar went blank after navigating: its displayed value depended on an
+  `editing` flag that navigation callbacks read as a stale closure. The field now has
+  one source of truth, with focus tracked in a ref.
 - `{...StyleSheet.absoluteFillObject}` spread to nothing, so every "absolute" overlay
   laid out in normal flow — the WebView and all full-screen screens rendered blank or
   stacked. Positions are now written out explicitly.
