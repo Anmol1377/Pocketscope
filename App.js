@@ -35,7 +35,7 @@ const hostOf = (u) => {
 };
 
 const DOWNLOADABLE = /\.(zip|apk|pdf|dmg|exe|mp4|mp3|csv|xlsx?|docx?|pptx?|tar|gz|7z|iso|deb|rpm)(\?|$)/i;
-const blankData = () => ({ reqs: [], logs: [], storage: [], perf: null, element: null, audit: null });
+const blankData = () => ({ reqs: [], logs: [], storage: [], perf: null, element: null, audit: null, tree: null });
 
 export default function Root() {
   return <SafeAreaHost><App /></SafeAreaHost>;
@@ -127,6 +127,9 @@ function App() {
     else if (m.t === 'perf') patchData(id, (s) => ({ ...s, perf: m }));
     else if (m.t === 'element') patchData(id, (s) => ({ ...s, element: m }));
     else if (m.t === 'audit') patchData(id, (s) => ({ ...s, audit: m.items }));
+    else if (m.t === 'tree') {
+      patchData(id, (s) => ({ ...s, tree: { ...(s.tree || {}), [m.parent === null ? 'null' : m.parent]: m.nodes } }));
+    }
     else if (m.t === 'storage') {
       patchData(id, (s) => ({ ...s, storage: [
         ...m.local.map((x) => ({ ...x, scope: 'local' })),
@@ -176,6 +179,9 @@ function App() {
   };
 
   const clearCaptured = (id = activeId) => patchData(id, () => blankData());
+
+  const treeJs = (fn, arg) =>
+    web()?.injectJavaScript('window.' + fn + ' && window.' + fn + '(' + (arg === undefined ? '' : arg) + '); true;');
 
   const setInspect = (on) => {
     setInspecting(on);
@@ -331,7 +337,11 @@ function App() {
           reqs={d.reqs} logs={d.logs} storage={d.storage} perf={d.perf}
           element={d.element} audit={d.audit}
           inspecting={inspecting} onToggleInspect={setInspect}
-          onRefreshAudit={() => web()?.injectJavaScript('window.__psAudit && window.__psAudit(); true;')}
+          onRefreshAudit={() => treeJs('__psAudit')}
+          tree={d.tree}
+          onLoadTree={() => { if (!d.tree) treeJs('__psTree', 'null'); }}
+          onExpandNode={(nodeId) => treeJs('__psTree', nodeId)}
+          onPickNode={(nodeId) => treeJs('__psTreePick', nodeId)}
           height={drawerH} setHeight={setDrawerH}
           onClose={() => { setDrawer(false); if (inspecting) setInspect(false); }}
           onClear={() => clearCaptured()}

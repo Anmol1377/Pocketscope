@@ -189,6 +189,74 @@ export default String.raw`
     if (c) out += '.' + String(c).trim().split(/\s+/).slice(0, 3).join('.');
     return out;
   };
+  // Node registry for the tree. Rebuilt per document, so ids stay valid only for
+  // the current page — which is all the RN side ever asks about.
+  var nodes = [];
+  var boxFor = null;
+  var highlight = function (el) {
+    if (!boxFor) {
+      boxFor = document.createElement('div');
+      boxFor.setAttribute('data-pocketscope', '1');
+      boxFor.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483646;' +
+        'border:2px solid #5AA9E6;background:rgba(90,169,230,.14);border-radius:2px;';
+      (document.body || document.documentElement).appendChild(boxFor);
+    }
+    var r = el.getBoundingClientRect();
+    boxFor.style.top = r.top + 'px'; boxFor.style.left = r.left + 'px';
+    boxFor.style.width = r.width + 'px'; boxFor.style.height = r.height + 'px';
+  };
+
+  var report = function (el) {
+    var r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+    var keys = ['display', 'position', 'width', 'height', 'margin', 'padding',
+                'border', 'font-family', 'font-size', 'line-height', 'color',
+                'background-color', 'flex', 'grid-template-columns', 'z-index', 'overflow'];
+    var styles = {};
+    keys.forEach(function (k) { var v = cs.getPropertyValue(k); if (v) styles[k] = v; });
+    var chain = [], node = el, n = 0;
+    while (node && node.nodeType === 1 && n++ < 6) { chain.unshift(sel(node)); node = node.parentElement; }
+    post({ t: 'element', tag: el.tagName.toLowerCase(), sel: sel(el), path: chain.join(' > '),
+           rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) },
+           styles: styles, html: clip(el.outerHTML, 3000),
+           text: clip((el.textContent || '').trim(), 200) });
+  };
+
+  // ---- DOM tree, walked one level at a time ----
+  var info = function (el) {
+    var id = nodes.push(el) - 1;
+    var kids = el.children ? el.children.length : 0;
+    return {
+      id: id,
+      tag: el.tagName ? el.tagName.toLowerCase() : '?',
+      elId: el.id || '',
+      cls: (el.getAttribute && el.getAttribute('class')) || '',
+      kids: kids,
+      text: kids ? '' : clip((el.textContent || '').trim().replace(/\s+/g, ' '), 60),
+    };
+  };
+  window.__psTree = function (parentId) {
+    var out = [];
+    if (parentId === null || parentId === undefined) {
+      nodes = [];
+      out.push(info(document.documentElement));
+    } else {
+      var el = nodes[parentId];
+      if (!el) return;
+      for (var i = 0; i < el.children.length; i++) {
+        if (el.children[i].getAttribute('data-pocketscope')) continue;   // never show our own overlay
+        out.push(info(el.children[i]));
+      }
+    }
+    post({ t: 'tree', parent: parentId === undefined ? null : parentId, nodes: out });
+  };
+  window.__psTreePick = function (id) {
+    var el = nodes[id];
+    if (!el) return;
+    try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) {}
+    highlight(el);
+    report(el);
+  };
+
   window.__psInspect = function (on) {
     if (!on) { if (window.__psOffInspect) window.__psOffInspect(); return; }
     if (window.__psOffInspect) return;
@@ -206,21 +274,10 @@ export default String.raw`
     var over = function (e) { if (e.target && e.target !== box) draw(e.target); };
     var pick = function (e) {
       var el = e.target;
-      if (!el || el === box) return;
+      if (!el || el === box || el.getAttribute('data-pocketscope')) return;
       e.preventDefault(); e.stopPropagation();
       draw(el);
-      var r = el.getBoundingClientRect(), cs = getComputedStyle(el);
-      var keys = ['display', 'position', 'width', 'height', 'margin', 'padding',
-                  'border', 'font-family', 'font-size', 'line-height', 'color',
-                  'background-color', 'flex', 'grid-template-columns', 'z-index', 'overflow'];
-      var styles = {};
-      keys.forEach(function (k) { var v = cs.getPropertyValue(k); if (v) styles[k] = v; });
-      var chain = [], node = el, n = 0;
-      while (node && node.nodeType === 1 && n++ < 6) { chain.unshift(sel(node)); node = node.parentElement; }
-      post({ t: 'element', tag: el.tagName.toLowerCase(), sel: sel(el), path: chain.join(' > '),
-             rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) },
-             styles: styles, html: clip(el.outerHTML, 3000),
-             text: clip((el.textContent || '').trim(), 200) });
+      report(el);
     };
     document.addEventListener('touchstart', over, true);
     document.addEventListener('click', pick, true);

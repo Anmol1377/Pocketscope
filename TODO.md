@@ -66,6 +66,8 @@ See [BUILD.md](BUILD.md) for the reasoning behind the order.
 
 - [x] Tap to inspect — touch highlights, tap reports selector, DOM path, box model,
       computed styles and outerHTML
+- [x] DOM tree — collapsible, walked one level at a time so a big page cannot
+      choke the bridge; tapping a node scrolls to it, highlights it, opens its detail
 - [x] Audit tab — mobile-specific checks: viewport meta, mixed content, oversized
       images, tap-target size, sideways scroll, alt text, lang attribute
 - [x] Network filter — search by URL/method/status, and a failed-only toggle
@@ -91,7 +93,8 @@ What Eruda structurally cannot do, because it isn't the browser:
 
 ## Step 4 — only if step 2 says yes
 
-- [ ] Full DOM tree (tap-to-inspect covers the common case)
+- [ ] Edit attributes and text from the tree
+- [ ] Reveal the tapped element's position in the tree
 - [ ] Resource timing via `PerformanceObserver` (images, CSS, fonts)
 - [ ] WebSocket frames
 - [ ] iOS build

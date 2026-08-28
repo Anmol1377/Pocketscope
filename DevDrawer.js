@@ -75,6 +75,7 @@ export default function DevDrawer({
   reqs, logs, storage, perf, element, audit,
   height, setHeight, onClose, onRefreshStorage, onRefreshPerf, onRefreshAudit,
   onEval, onClear, inspecting, onToggleInspect,
+  tree, onExpandNode, onPickNode, onLoadTree,
 }) {
   const [tab, setTab] = useState('Network');
   const [sel, setSel] = useState(null);
@@ -105,7 +106,7 @@ export default function DevDrawer({
               if (x === 'Storage') onRefreshStorage();
               if (x === 'Perf') onRefreshPerf();
               if (x === 'Audit') onRefreshAudit();
-              if (x === 'Element' && !inspecting) onToggleInspect(true);
+              if (x === 'Element') onLoadTree();
             }}
             style={[d.tab, tab === x && d.tabOn]}>
             <Text style={[d.tabText, tab === x && d.tabTextOn]}>{x.toUpperCase()}</Text>
@@ -162,7 +163,8 @@ export default function DevDrawer({
         />
         </>
       ) : tab === 'Element' ? (
-        <ElementPanel element={element} inspecting={inspecting} onToggle={onToggleInspect} onCopy={copy} />
+        <ElementPanel element={element} inspecting={inspecting} onToggle={onToggleInspect} onCopy={copy}
+                      tree={tree} onExpand={onExpandNode} onPickNode={onPickNode} />
       ) : tab === 'Audit' ? (
         <AuditPanel audit={audit} onRefresh={onRefreshAudit} />
       ) : tab === 'Console' ? (
@@ -316,9 +318,21 @@ function Perf({ perf, onRefresh }) {
   );
 }
 
-function ElementPanel({ element, inspecting, onToggle, onCopy }) {
+function ElementPanel({ element, inspecting, onToggle, onCopy, tree, onExpand, onPickNode }) {
+  const [view, setView] = useState('tree');
   return (
     <View style={{ flex: 1 }}>
+      <View style={d.segmented}>
+        {['tree', 'detail'].map((v) => (
+          <Pressable key={v} onPress={() => setView(v)} style={[d.seg, view === v && d.segOn]}>
+            <Text style={[d.segText, view === v && d.segTextOn]}>{v === 'tree' ? 'DOM tree' : 'Selected'}</Text>
+          </Pressable>
+        ))}
+      </View>
+      {view === 'tree' ? (
+        <TreeView tree={tree} onExpand={onExpand} onPick={(id) => { onPickNode(id); setView('detail'); }} />
+      ) : (
+      <View style={{ flex: 1 }}>
       <View style={d.inspectBar}>
         <Pressable onPress={() => onToggle(!inspecting)} style={[d.inspectBtn, inspecting && d.inspectOn]}>
           <Icon name="scan-outline" size={14} color={inspecting ? C.well : C.trace} />
@@ -361,7 +375,57 @@ function ElementPanel({ element, inspecting, onToggle, onCopy }) {
           <Text style={d.detailLine} selectable>{element.html}</Text>
         </ScrollView>
       )}
+      </View>
+      )}
     </View>
+  );
+}
+
+const VOID_TAGS = new Set(['img', 'input', 'br', 'hr', 'meta', 'link', 'source', 'path', 'circle', 'rect']);
+
+function TreeView({ tree, onExpand, onPick }) {
+  const [open, setOpen] = useState({});
+  const roots = tree?.[null] || tree?.['null'];
+
+  if (!roots) {
+    return <View style={d.emptyWrap}><Text style={d.empty}>Reading the DOM…</Text></View>;
+  }
+
+  const toggle = (n) => {
+    const next = !open[n.id];
+    setOpen((o) => ({ ...o, [n.id]: next }));
+    if (next && !tree[n.id]) onExpand(n.id);
+  };
+
+  const Row = (n, depth) => {
+    const kids = tree[n.id];
+    const isOpen = open[n.id];
+    return (
+      <View key={n.id}>
+        <View style={[d.treeRow, { paddingLeft: S.sm + depth * 14 }]}>
+          <Pressable onPress={() => n.kids > 0 && toggle(n)} hitSlop={8} style={d.twisty}>
+            <Text style={[d.twistyText, !n.kids && { color: 'transparent' }]}>{isOpen ? '▾' : '▸'}</Text>
+          </Pressable>
+          <Pressable onPress={() => onPick(n.id)} style={{ flex: 1, flexDirection: 'row', alignItems: 'baseline' }}>
+            <Text style={d.treeTag} numberOfLines={1}>
+              &lt;{n.tag}
+              {!!n.elId && <Text style={d.treeId}> #{n.elId}</Text>}
+              {!!n.cls && <Text style={d.treeCls}> .{String(n.cls).trim().split(/\s+/).slice(0, 2).join('.')}</Text>}
+              {VOID_TAGS.has(n.tag) ? ' /' : ''}&gt;
+            </Text>
+            {!!n.text && <Text style={d.treeText} numberOfLines={1}> {n.text}</Text>}
+            {n.kids > 0 && !isOpen && <Text style={d.treeCount}> {n.kids}</Text>}
+          </Pressable>
+        </View>
+        {isOpen && kids && kids.map((c) => Row(c, depth + 1))}
+      </View>
+    );
+  };
+
+  return (
+    <ScrollView style={d.list} contentContainerStyle={{ paddingVertical: S.sm, paddingBottom: S.xl }}>
+      {roots.map((n) => Row(n, 0))}
+    </ScrollView>
   );
 }
 
@@ -575,6 +639,22 @@ const d = StyleSheet.create({
   auditCount: { fontFamily: F.monoMed, fontSize: 11 },
   auditTitle: { fontFamily: F.sansMed, fontSize: 12 },
   auditDetail: { fontFamily: F.sans, fontSize: 11, color: C.dim, marginTop: 2, lineHeight: 16 },
+  segmented: {
+    flexDirection: 'row', margin: S.sm, borderRadius: 5, overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: C.edge,
+  },
+  seg: { flex: 1, alignItems: 'center', paddingVertical: 7 },
+  segOn: { backgroundColor: C.raised },
+  segText: { fontFamily: F.sansMed, fontSize: 11, color: C.dim },
+  segTextOn: { color: C.read },
+  treeRow: { flexDirection: 'row', alignItems: 'center', paddingRight: S.md, paddingVertical: 3 },
+  twisty: { width: 16, alignItems: 'center' },
+  twistyText: { fontFamily: F.mono, fontSize: 11, color: C.dim },
+  treeTag: { fontFamily: F.mono, fontSize: 11, color: C.trace },
+  treeId: { color: C.warn },
+  treeCls: { color: C.live },
+  treeText: { fontFamily: F.mono, fontSize: 10, color: C.dim, flexShrink: 1 },
+  treeCount: { fontFamily: F.mono, fontSize: 9, color: C.edge },
   prompt: {
     flexDirection: 'row', alignItems: 'center', gap: S.sm,
     paddingHorizontal: S.md, paddingVertical: S.sm,
