@@ -49,6 +49,7 @@ function App() {
   const [reqs, setReqs] = useState([]);
   const [logs, setLogs] = useState([]);
   const [storage, setStorage] = useState([]);
+  const [perf, setPerf] = useState(null);
   const [drawer, setDrawer] = useState(false);
   const [drawerH, setDrawerH] = useState(300);
   const [settings, setSettings] = useState(false);
@@ -85,6 +86,7 @@ function App() {
     const key = ++seq.current;   // computed outside the updater — updaters must stay pure
     if (m.t === 'net') setReqs((r) => [...r.slice(-299), { ...m, key }]);
     else if (m.t === 'log') setLogs((l) => [...l.slice(-299), { ...m, key }]);
+    else if (m.t === 'perf') setPerf(m);
     else if (m.t === 'storage') {
       setStorage([
         ...m.local.map((x) => ({ ...x, scope: 'local' })),
@@ -94,8 +96,20 @@ function App() {
     }
   }, []);
 
-  const go = (text) => { setUrl(normalize(String(text).trim())); setEditing(false); };
+  const go = (text) => { setUrl(normalize(String(text).trim())); setEditing(false); setPerf(null); };
   const refreshStorage = () => web.current?.injectJavaScript('window.__psStorage && window.__psStorage(); true;');
+  const refreshPerf = () => web.current?.injectJavaScript('window.__psPerf && window.__psPerf(); true;');
+  const evalJs = (code) => {
+    setLogs((l) => [...l.slice(-299), { t: 'log', level: 'input', text: '> ' + code, key: ++seq.current }]);
+    // Inject the source directly instead of eval()-ing a string: strict-CSP pages
+    // ('unsafe-eval' not allowed) reject eval, and most real sites set one.
+    const isStatement = /^\s*(var|let|const|function|class|if|for|while|do|switch|try|throw|return)\b/.test(code);
+    const body = isStatement ? code : 'return (' + code + ')';
+    web.current?.injectJavaScript(
+      '(function(){try{window.__psResult((function(){' + body + '})())}' +
+      'catch(e){window.__psError(String(e))}})(); true;'
+    );
+  };
   const openEruda = () =>
     web.current?.injectJavaScript('window.__psEruda && window.__psEruda(); true;');
 
@@ -169,10 +183,12 @@ function App() {
 
       {drawer && (
         <DevDrawer
-          reqs={reqs} logs={logs} storage={storage}
+          reqs={reqs} logs={logs} storage={storage} perf={perf}
           height={drawerH} setHeight={setDrawerH}
           onClose={() => setDrawer(false)}
           onRefreshStorage={refreshStorage}
+          onRefreshPerf={refreshPerf}
+          onEval={evalJs}
         />
       )}
 

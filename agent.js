@@ -109,6 +109,65 @@ export default String.raw`
     };
   }
 
+  // ---- console prompt results ----
+  // The code itself is injected directly by RN (evaluateJavascript), never eval'd —
+  // pages with a strict CSP refuse 'unsafe-eval', which would break the prompt.
+  window.__psResult = function (v) {
+    if (v && typeof v.then === 'function') {
+      post({ t: 'log', level: 'eval', text: '< Promise {pending}' });
+      v.then(function (x) { post({ t: 'log', level: 'eval', text: '< ' + show(x) }); },
+             function (e) { post({ t: 'log', level: 'error', text: '< ' + String(e) }); });
+      return;
+    }
+    post({ t: 'log', level: 'eval', text: '< ' + show(v) });
+  };
+  window.__psError = function (m) { post({ t: 'log', level: 'error', text: m }); };
+
+  // ---- performance ----
+  window.__psLCP = null; window.__psCLS = 0;
+  try {
+    new PerformanceObserver(function (l) {
+      var e = l.getEntries(); if (e.length) window.__psLCP = Math.round(e[e.length - 1].startTime);
+    }).observe({ type: 'largest-contentful-paint', buffered: true });
+  } catch (e) {}
+  try {
+    new PerformanceObserver(function (l) {
+      l.getEntries().forEach(function (x) { if (!x.hadRecentInput) window.__psCLS += x.value; });
+    }).observe({ type: 'layout-shift', buffered: true });
+  } catch (e) {}
+
+  window.__psPerf = function () {
+    var o = { t: 'perf' };
+    try {
+      var n = performance.getEntriesByType('navigation')[0];
+      if (n) {
+        o.dns = Math.round(n.domainLookupEnd - n.domainLookupStart);
+        o.tcp = Math.round(n.connectEnd - n.connectStart);
+        o.ttfb = Math.round(n.responseStart - n.requestStart);
+        o.dcl = Math.round(n.domContentLoadedEventEnd - n.startTime);
+        o.load = Math.round(n.loadEventEnd - n.startTime);
+        o.docBytes = n.transferSize || 0;
+      }
+      performance.getEntriesByType('paint').forEach(function (p) {
+        if (p.name === 'first-contentful-paint') o.fcp = Math.round(p.startTime);
+      });
+      var res = performance.getEntriesByType('resource');
+      o.resources = res.length;
+      o.bytes = res.reduce(function (a, r) { return a + (r.transferSize || 0); }, 0);
+      var by = {};
+      res.forEach(function (r) { var k = r.initiatorType || 'other'; by[k] = (by[k] || 0) + 1; });
+      o.byType = by;
+      var slow = res.slice().sort(function (a, b) { return b.duration - a.duration; }).slice(0, 5);
+      o.slowest = slow.map(function (r) {
+        return { name: String(r.name).split('/').pop().slice(0, 40) || r.name, ms: Math.round(r.duration) };
+      });
+      if (performance.memory) o.heapMB = Math.round(performance.memory.usedJSHeapSize / 1048576);
+    } catch (e) {}
+    o.lcp = window.__psLCP;
+    o.cls = Math.round(window.__psCLS * 1000) / 1000;
+    post(o);
+  };
+
   // ---- Eruda, on demand only ----
   // Not auto-loaded: its floating entry button sits on top of our toolbar, and the
   // drawer covers the common cases. This is the escape hatch for DOM inspection.

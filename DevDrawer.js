@@ -1,11 +1,23 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, Pressable, ScrollView, StyleSheet, PanResponder, Dimensions,
+  View, Text, Pressable, ScrollView, StyleSheet, PanResponder, Dimensions, TextInput,
 } from 'react-native';
 import { copy as copyText, Icon } from './native';
 import { C, F, S, statusColor } from './theme';
 
-const TABS = ['Network', 'Console', 'Storage'];
+// Core Web Vitals thresholds (good, poor). Between them = needs work.
+const LIMITS = {
+  lcp:  [2500, 4000], fcp: [1800, 3000], ttfb: [800, 1800],
+  cls:  [0.1, 0.25],  dcl: [2000, 4000], load: [3000, 6000],
+};
+const rate = (k, v) => {
+  const l = LIMITS[k];
+  if (!l || v == null) return C.read;
+  return v <= l[0] ? C.live : v <= l[1] ? C.warn : C.fail;
+};
+const fmtBytes = (b) => (b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.round(b / 1024) + ' KB');
+
+const TABS = ['Network', 'Console', 'Storage', 'Perf'];
 const SCREEN = Dimensions.get('window').height;
 const MIN_H = 180;
 
@@ -59,7 +71,7 @@ export function ScopeTrace({ reqs, open, onPress }) {
   );
 }
 
-export default function DevDrawer({ reqs, logs, storage, height, setHeight, onClose, onRefreshStorage }) {
+export default function DevDrawer({ reqs, logs, storage, perf, height, setHeight, onClose, onRefreshStorage, onRefreshPerf, onEval }) {
   const [tab, setTab] = useState('Network');
   const [sel, setSel] = useState(null);
   const start = useRef(height);
@@ -81,7 +93,11 @@ export default function DevDrawer({ reqs, logs, storage, height, setHeight, onCl
         {TABS.map((x) => (
           <Pressable
             key={x}
-            onPress={() => { setSel(null); setTab(x); if (x === 'Storage') onRefreshStorage(); }}
+            onPress={() => {
+              setSel(null); setTab(x);
+              if (x === 'Storage') onRefreshStorage();
+              if (x === 'Perf') onRefreshPerf();
+            }}
             style={[d.tab, tab === x && d.tabOn]}>
             <Text style={[d.tabText, tab === x && d.tabTextOn]}>{x.toUpperCase()}</Text>
           </Pressable>
@@ -95,6 +111,7 @@ export default function DevDrawer({ reqs, logs, storage, height, setHeight, onCl
         <Detail req={sel} onBack={() => setSel(null)} onCopy={copy} />
       ) : tab === 'Network' ? (
         <List
+          follow
           data={reqs}
           empty="No requests yet. Load a page."
           render={(r) => {
@@ -111,20 +128,33 @@ export default function DevDrawer({ reqs, logs, storage, height, setHeight, onCl
           }}
         />
       ) : tab === 'Console' ? (
-        <List
-          data={logs}
-          empty="No console output yet."
-          render={(l, i) => (
-            <View key={l.key ?? i} style={d.row}>
-              <View style={[d.rail, { backgroundColor: l.level === 'error' ? C.fail : l.level === 'warn' ? C.warn : C.edge }]} />
-              <Text
-                style={[d.log, l.level === 'error' && { color: C.fail }, l.level === 'warn' && { color: C.warn }]}
-                selectable>
-                {l.text}
-              </Text>
-            </View>
-          )}
-        />
+        <>
+          <List
+            follow
+            data={logs}
+            empty="No console output yet. Run an expression below."
+            render={(l, i) => (
+              <View key={l.key ?? i} style={d.row}>
+                <View style={[d.rail, {
+                  backgroundColor: l.level === 'error' ? C.fail : l.level === 'warn' ? C.warn
+                    : l.level === 'eval' ? C.trace : l.level === 'input' ? C.dim : C.edge,
+                }]} />
+                <Text
+                  style={[d.log,
+                    l.level === 'error' && { color: C.fail },
+                    l.level === 'warn' && { color: C.warn },
+                    l.level === 'eval' && { color: C.trace },
+                    l.level === 'input' && { color: C.dim }]}
+                  selectable>
+                  {l.text}
+                </Text>
+              </View>
+            )}
+          />
+          <Prompt onRun={onEval} />
+        </>
+      ) : tab === 'Perf' ? (
+        <Perf perf={perf} onRefresh={onRefreshPerf} />
       ) : (
         <List
           data={storage}
@@ -143,10 +173,130 @@ export default function DevDrawer({ reqs, logs, storage, height, setHeight, onCl
   );
 }
 
-function List({ data, render, empty }) {
+function Prompt({ onRun }) {
+  const [code, setCode] = useState('');
+  const run = () => {
+    const c = code.trim();
+    if (!c) return;
+    onRun(c);
+    setCode('');
+  };
+  return (
+    <View style={d.prompt}>
+      <Text style={d.caret}>&gt;</Text>
+      <TextInput
+        style={d.promptInput}
+        value={code}
+        onChangeText={setCode}
+        onSubmitEditing={run}
+        placeholder="document.title"
+        placeholderTextColor={C.dim}
+        autoCapitalize="none"
+        autoCorrect={false}
+        autoComplete="off"
+        returnKeyType="go"
+        blurOnSubmit={false}
+        selectionColor={C.trace}
+        multiline={false}
+      />
+      <Pressable onPress={run} style={d.runBtn} hitSlop={6}>
+        <Text style={d.runText}>Run</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function Perf({ perf, onRefresh }) {
+  if (!perf) {
+    return (
+      <View style={d.emptyWrap}>
+        <Text style={d.empty}>Reading page timing…</Text>
+        <Pressable onPress={onRefresh} style={d.reread}><Text style={d.rereadText}>Read again</Text></Pressable>
+      </View>
+    );
+  }
+  const Metric = ({ k, label, value, unit = 'ms' }) => (
+    <View style={d.metric}>
+      <View style={[d.rail, { backgroundColor: rate(k, value) }]} />
+      <Text style={d.metricLabel}>{label}</Text>
+      <Text style={[d.metricValue, { color: rate(k, value) }]}>
+        {value == null ? '—' : value + (unit ? ' ' + unit : '')}
+      </Text>
+    </View>
+  );
+  return (
+    <ScrollView style={d.list} contentContainerStyle={{ paddingBottom: S.xl }}>
+      <Text style={d.section}>CORE WEB VITALS</Text>
+      <Metric k="lcp" label="Largest contentful paint" value={perf.lcp} />
+      <Metric k="cls" label="Cumulative layout shift" value={perf.cls} unit="" />
+      <Metric k="fcp" label="First contentful paint" value={perf.fcp} />
+
+      <Text style={d.section}>LOAD</Text>
+      <Metric k="ttfb" label="Time to first byte" value={perf.ttfb} />
+      <Metric k="dcl" label="DOM content loaded" value={perf.dcl} />
+      <Metric k="load" label="Load complete" value={perf.load} />
+      <Metric k="dns" label="DNS lookup" value={perf.dns} />
+      <Metric k="tcp" label="TCP connect" value={perf.tcp} />
+
+      <Text style={d.section}>WEIGHT</Text>
+      <Metric k="n" label="Resources" value={perf.resources} unit="" />
+      <View style={d.metric}>
+        <View style={[d.rail, { backgroundColor: C.edge }]} />
+        <Text style={d.metricLabel}>Transferred</Text>
+        <Text style={d.metricValue}>{perf.bytes != null ? fmtBytes(perf.bytes) : '—'}</Text>
+      </View>
+      {perf.heapMB != null && <Metric k="n" label="JS heap used" value={perf.heapMB} unit="MB" />}
+
+      {!!perf.byType && (
+        <>
+          <Text style={d.section}>BY TYPE</Text>
+          {Object.entries(perf.byType).sort((a, b) => b[1] - a[1]).map(([k, v]) => (
+            <View key={k} style={d.metric}>
+              <View style={[d.rail, { backgroundColor: C.edge }]} />
+              <Text style={d.metricLabel}>{k}</Text>
+              <Text style={d.metricValue}>{v}</Text>
+            </View>
+          ))}
+        </>
+      )}
+
+      {!!(perf.slowest || []).length && (
+        <>
+          <Text style={d.section}>SLOWEST RESOURCES</Text>
+          {perf.slowest.map((r, i) => (
+            <View key={i} style={d.metric}>
+              <View style={[d.rail, { backgroundColor: r.ms > 1000 ? C.fail : r.ms > 400 ? C.warn : C.live }]} />
+              <Text style={d.metricLabel} numberOfLines={1}>{r.name}</Text>
+              <Text style={d.metricValue}>{r.ms} ms</Text>
+            </View>
+          ))}
+        </>
+      )}
+
+      <Pressable onPress={onRefresh} style={d.reread}><Text style={d.rereadText}>Read again</Text></Pressable>
+    </ScrollView>
+  );
+}
+
+function List({ data, render, empty, follow }) {
+  const ref = useRef(null);
+  const pinned = useRef(true);   // stop following once the user scrolls up to read
+
+  useEffect(() => {
+    if (follow && pinned.current) ref.current?.scrollToEnd({ animated: false });
+  }, [data.length, follow]);
+
   if (!data.length) return <View style={d.emptyWrap}><Text style={d.empty}>{empty}</Text></View>;
   return (
-    <ScrollView style={d.list} contentContainerStyle={{ paddingBottom: S.lg }}>
+    <ScrollView
+      ref={ref}
+      style={d.list}
+      contentContainerStyle={{ paddingBottom: S.lg }}
+      onScroll={(e) => {
+        const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+        pinned.current = contentOffset.y + layoutMeasurement.height >= contentSize.height - 40;
+      }}
+      scrollEventThrottle={16}>
       {data.map(render)}
     </ScrollView>
   );
@@ -252,8 +402,29 @@ const d = StyleSheet.create({
   curlText: { fontFamily: F.sansBold, fontSize: 11, color: C.well },
   detailUrl: { fontFamily: F.mono, fontSize: 11, color: C.read, marginTop: S.sm, lineHeight: 16 },
   section: {
+    paddingHorizontal: S.md,
     fontFamily: F.sansMed, fontSize: 9, letterSpacing: 1.1, color: C.dim,
     marginTop: S.lg, marginBottom: S.sm,
   },
   detailLine: { fontFamily: F.mono, fontSize: 10, color: C.read, lineHeight: 15 },
+  prompt: {
+    flexDirection: 'row', alignItems: 'center', gap: S.sm,
+    paddingHorizontal: S.md, paddingVertical: S.sm,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.edge, backgroundColor: C.chassis,
+  },
+  caret: { fontFamily: F.monoMed, fontSize: 13, color: C.trace },
+  promptInput: { flex: 1, fontFamily: F.mono, fontSize: 12, color: C.read, padding: 0, height: 30 },
+  runBtn: { backgroundColor: C.trace, paddingHorizontal: S.md, paddingVertical: 5, borderRadius: 4 },
+  runText: { fontFamily: F.sansBold, fontSize: 11, color: C.well },
+  metric: {
+    flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingRight: S.md,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.chassis,
+  },
+  metricLabel: { flex: 1, fontFamily: F.sans, fontSize: 12, color: C.read },
+  metricValue: { fontFamily: F.monoMed, fontSize: 12, marginLeft: S.sm, color: C.read },
+  reread: {
+    alignSelf: 'center', marginTop: S.lg, paddingHorizontal: S.lg, paddingVertical: S.sm,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: C.edge, borderRadius: 4,
+  },
+  rereadText: { fontFamily: F.sansMed, fontSize: 11, color: C.dim },
 });

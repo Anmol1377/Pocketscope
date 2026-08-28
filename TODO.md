@@ -10,6 +10,9 @@ See [BUILD.md](BUILD.md) for the reasoning behind the order.
 - [x] DevTools drawer — Network / Console / Storage tabs, drag to resize
 - [x] Scope trace — live request readout, doubles as the drawer handle
 - [x] Copy any request as cURL; share whole session
+- [x] Console JS prompt — runs expressions against the live page
+- [x] Perf tab — Core Web Vitals, load timing, weight, slowest resources
+- [x] Console and Network follow the newest line (stop following when you scroll up)
 - [x] Instrument UI — IBM Plex, graphite palette, vector icons
 - [x] Start page setting — Pocketscope page or Google, persisted
 - [x] Landing page at [docs/index.html](docs/index.html), bundled into the app as the start page
@@ -27,6 +30,9 @@ See [BUILD.md](BUILD.md) for the reasoning behind the order.
   collided across pages. Ids now assigned in React Native.
 - Start page no longer depends on GitHub Pages being live — it is bundled.
 - Eruda is loaded on demand (⋯ → Open Eruda); its floating button covered the toolbar.
+- Console prompt used `eval()`, which strict-CSP sites ('unsafe-eval' not allowed) refuse —
+  github.com among them. The source is now injected directly instead of eval'd.
+- Console list did not scroll to the newest entry, so results appeared below the fold.
 
 ## Next — publish the landing page
 
@@ -42,6 +48,7 @@ See [BUILD.md](BUILD.md) for the reasoning behind the order.
 - [ ] Tabs
 - [ ] Desktop user-agent toggle
 - [ ] Find in page
+- [ ] Command history in the console prompt (up-arrow recall)
 
 ## Step 2 — ship it
 
