@@ -17,7 +17,9 @@ Pre-code. Specs plus a runnable starting point.
 | [PRD.md](PRD.md) | Problem, users, scope, features, metrics, non-goals |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the inspection actually works, and what it can't see (v2 design) |
 | [BUILD.md](BUILD.md) | **Start here.** Build order, and the shortcut that makes v1 ~90 lines |
-| [App.js](App.js) | Working Expo + `react-native-webview` starting point |
+| [TODO.md](TODO.md) | What's done, what's next |
+| [App.js](App.js) | The app — shell, drawer, injected agent |
+| [docs/index.html](docs/index.html) | Landing page / in-app start page (GitHub Pages) |
 
 ## The one-line pitch
 

@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pocketscope — DevTools in your pocket</title>
+<meta name="description" content="A mobile browser with Console, Network and Storage inspection built in. Debug any URL on a real device, no laptop, no cable, no script tag.">
+<meta name="theme-color" content="#0E1216">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --well:#0E1216; --chassis:#191F26; --raised:#212932; --edge:#2A333D;
+    --dim:#6B7A88; --read:#D8E1E8;
+    --live:#4DD8A6; --warn:#E8B54A; --fail:#FF5F52; --trace:#5AA9E6;
+    --sans:'IBM Plex Sans',system-ui,sans-serif; --mono:'IBM Plex Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--well); color:var(--read); font-family:var(--sans);
+    -webkit-font-smoothing:antialiased; line-height:1.5;
+    padding:env(safe-area-inset-top) 0 calc(env(safe-area-inset-bottom) + 32px);
+  }
+  .wrap{max-width:680px;margin:0 auto;padding:0 20px}
+
+  /* ── masthead ─────────────────────────────────────────── */
+  header{padding:44px 0 28px}
+  .mark{display:flex;align-items:baseline;gap:10px}
+  .mark b{font-family:var(--mono);font-weight:600;font-size:19px;letter-spacing:-.02em}
+  .mark span{font-family:var(--mono);font-size:10px;color:var(--dim);letter-spacing:.14em}
+  h1{
+    font-size:clamp(28px,7vw,42px); line-height:1.12; margin:22px 0 0;
+    font-weight:600; letter-spacing:-.025em;
+  }
+  h1 em{font-style:normal;color:var(--dim)}
+  .sub{color:var(--dim);font-size:15px;margin:14px 0 0;max-width:46ch}
+
+  /* ── the scope trace: a live readout, the thing this product is named for ── */
+  .scope{
+    margin:26px 0 0; height:44px; background:var(--chassis);
+    border:1px solid var(--edge); border-radius:5px;
+    display:flex; align-items:flex-end; gap:2px; padding:8px 10px; overflow:hidden;
+  }
+  .scope i{width:3px;border-radius:1px;background:var(--live);animation:t 2.4s infinite ease-in-out}
+  @keyframes t{0%,100%{opacity:.35}50%{opacity:1}}
+  .legend{
+    display:flex;gap:16px;margin-top:8px;font-family:var(--mono);font-size:10px;color:var(--dim);
+  }
+  .legend b{font-weight:500}
+  .dot{display:inline-block;width:6px;height:6px;border-radius:1px;margin-right:5px;vertical-align:1px}
+
+  /* ── quick launch: this page is also the app's start page ─────────── */
+  h2{
+    font-family:var(--sans);font-size:10px;font-weight:500;letter-spacing:.14em;
+    color:var(--dim);margin:44px 0 12px;
+  }
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+  a.tile{
+    display:block;padding:13px 14px;background:var(--chassis);border:1px solid var(--edge);
+    border-radius:5px;text-decoration:none;color:var(--read);
+    transition:border-color .12s,background .12s;
+  }
+  a.tile:hover,a.tile:focus-visible{border-color:var(--trace);background:var(--raised);outline:none}
+  a.tile b{display:block;font-size:13px;font-weight:500}
+  a.tile span{display:block;font-family:var(--mono);font-size:10px;color:var(--dim);margin-top:3px}
+
+  /* ── panels ───────────────────────────────────────────── */
+  .panel{
+    border:1px solid var(--edge);border-radius:5px;background:var(--chassis);
+    padding:16px;margin-bottom:8px;
+  }
+  .panel h3{margin:0;font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px}
+  .panel p{margin:7px 0 0;color:var(--dim);font-size:13px}
+  .rail{width:2px;height:15px;border-radius:1px}
+
+  table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px}
+  td{padding:7px 0;border-bottom:1px solid var(--chassis);color:var(--dim)}
+  td:first-child{color:var(--read);width:42%}
+  tr:last-child td{border-bottom:0}
+
+  footer{margin-top:44px;padding-top:20px;border-top:1px solid var(--edge);
+    display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;
+    font-family:var(--mono);font-size:11px;color:var(--dim)}
+  footer a{color:var(--trace);text-decoration:none}
+  footer a:hover{text-decoration:underline}
+  @media (prefers-reduced-motion:reduce){.scope i{animation:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="mark"><b>▚ Pocketscope</b><span>v0.1</span></div>
+    <h1>See what the page is really doing.<br><em>On the phone where it breaks.</em></h1>
+    <p class="sub">A browser with Console, Network and Storage inspection built in. Any URL — no laptop, no cable, no script tag on the site.</p>
+
+    <div class="scope" id="scope" aria-hidden="true"></div>
+    <div class="legend">
+      <b><i class="dot" style="background:var(--live)"></i>2xx</b>
+      <b><i class="dot" style="background:var(--warn)"></i>3xx</b>
+      <b><i class="dot" style="background:var(--fail)"></i>4xx / 5xx</b>
+      <b style="margin-left:auto">tick height = duration</b>
+    </div>
+  </header>
+
+  <h2>QUICK LAUNCH</h2>
+  <div class="grid">
+    <a class="tile" href="https://httpbin.org/#/HTTP_Methods"><b>httpbin</b><span>request echo</span></a>
+    <a class="tile" href="https://jsonplaceholder.typicode.com/posts"><b>JSONPlaceholder</b><span>fake REST API</span></a>
+    <a class="tile" href="https://github.com"><b>GitHub</b><span>heavy XHR app</span></a>
+    <a class="tile" href="https://news.ycombinator.com"><b>Hacker News</b><span>plain HTML</span></a>
+    <a class="tile" href="https://example.com"><b>example.com</b><span>minimal page</span></a>
+    <a class="tile" href="https://www.google.com"><b>Google</b><span>search</span></a>
+  </div>
+
+  <h2>WHAT IT READS</h2>
+  <div class="panel">
+    <h3><span class="rail" style="background:var(--live)"></span>Network</h3>
+    <p>Every fetch and XHR: status, timing, headers, request and response bodies. Copy any call as a cURL command.</p>
+  </div>
+  <div class="panel">
+    <h3><span class="rail" style="background:var(--fail)"></span>Console</h3>
+    <p>Logs, warnings, uncaught exceptions and unhandled promise rejections, captured from page load.</p>
+  </div>
+  <div class="panel">
+    <h3><span class="rail" style="background:var(--trace)"></span>Storage</h3>
+    <p>LocalStorage, SessionStorage and cookies for the current page. Long-press any value to copy it.</p>
+  </div>
+
+  <h2>KNOWN LIMITS</h2>
+  <div class="panel">
+    <table>
+      <tr><td>Images, CSS, fonts</td><td>not captured — they never pass through fetch or XHR</td></tr>
+      <tr><td>The document request</td><td>happens before the agent exists</td></tr>
+      <tr><td>HttpOnly cookies</td><td>invisible to any injected script, by design</td></tr>
+      <tr><td>Cross-origin iframes</td><td>blocked by same-origin policy — not fixable</td></tr>
+    </table>
+  </div>
+
+  <footer>
+    <span>Built on Chromium · React Native</span>
+    <a href="https://github.com/Anmol1377/Pocketscope">github.com/Anmol1377/Pocketscope</a>
+  </footer>
+</div>
+
+<script>
+  // Deterministic trace — a readout, not a decoration.
+  const scope = document.getElementById('scope');
+  const seq = [14,7,31,9,52,11,6,22,88,13,9,41,17,6,73,10,28,8,19,64,12,7,36,15,9,47,21,6,11,30,8,58,13];
+  const col = i => (i % 11 === 0 ? 'var(--fail)' : i % 7 === 0 ? 'var(--warn)' : 'var(--live)');
+  scope.innerHTML = seq.map((v, i) =>
+    `<i style="height:${Math.max(3, (v / 88) * 28)}px;background:${col(i)};animation-delay:${i * 60}ms"></i>`
+  ).join('');
+</script>
+</body>
+</html>
