@@ -112,6 +112,57 @@ export function UrlList({ title, items, onClose, onOpen, onRemove, onClear, empt
   );
 }
 
+/* ── Clear browsing data ──────────────────────────────── */
+export const CLEARABLE = [
+  { key: 'cookies',  label: 'Cookies',        hint: 'This site. HttpOnly cookies are invisible to scripts' },
+  { key: 'storage',  label: 'Site storage',   hint: 'LocalStorage, SessionStorage and IndexedDB for this site' },
+  { key: 'cache',    label: 'Cached files',   hint: 'Images, scripts and stylesheets, all sites' },
+  { key: 'formData', label: 'Form data',      hint: 'Saved autofill entries' },
+  { key: 'navHist',  label: 'Page history',   hint: 'Back/forward history in open tabs' },
+  { key: 'history',  label: 'Browsing history', hint: 'Pages you have visited' },
+  { key: 'downloads',label: 'Download list',  hint: 'The list only — files already saved are kept' },
+  { key: 'captured', label: 'Captured data',  hint: 'Requests, console output and storage readings' },
+];
+
+export function ClearData({ onClose, onClear, topInset }) {
+  const [picked, setPicked] = useState(
+    { cookies: true, storage: true, cache: true, formData: true, navHist: true,
+      history: true, downloads: false, captured: true }
+  );
+  const count = Object.values(picked).filter(Boolean).length;
+  return (
+    <Screen title="Clear browsing data" topInset={topInset} onClose={onClose}>
+      <ScrollView contentContainerStyle={{ paddingBottom: S.lg }}>
+        {CLEARABLE.map((c) => (
+          <Pressable key={c.key} onPress={() => setPicked((p) => ({ ...p, [c.key]: !p[c.key] }))} style={s.setRow}>
+            <Icon name={picked[c.key] ? 'checkbox' : 'square-outline'} size={18}
+                  color={picked[c.key] ? C.trace : C.dim} />
+            <View style={{ flex: 1 }}>
+              <Text style={s.setLabel}>{c.label}</Text>
+              <Text style={s.setHint}>{c.hint}</Text>
+            </View>
+          </Pressable>
+        ))}
+        <Text style={s.note}>
+          Bookmarks are never cleared. HttpOnly cookies cannot be removed from JavaScript —
+          use a private tab if you need a session that keeps nothing.
+        </Text>
+      </ScrollView>
+      <View style={s.footer}>
+        <Pressable
+          onPress={() => onClear(picked)}
+          disabled={!count}
+          style={[s.footBtn, s.footBtnDanger, !count && s.footBtnOff]}>
+          <Icon name="trash-outline" size={15} color={count ? C.well : C.dim} />
+          <Text style={[s.footText, !count && { color: C.dim }]}>
+            {count ? `Clear ${count} item${count > 1 ? 's' : ''}` : 'Nothing selected'}
+          </Text>
+        </Pressable>
+      </View>
+    </Screen>
+  );
+}
+
 /* ── Settings ─────────────────────────────────────────── */
 export function Settings({ homeKey, homes, onPickHome, onClose, onClearData, onClearCaptured, preserveLog, onTogglePreserve, desktopUA, onToggleUA, topInset }) {
   const Row = ({ icon, label, hint, right, onPress, danger }) => (
@@ -201,6 +252,12 @@ const s = StyleSheet.create({
     backgroundColor: C.trace, paddingVertical: 11, borderRadius: 5,
   },
   footBtnGhost: { backgroundColor: 'transparent', borderWidth: StyleSheet.hairlineWidth, borderColor: C.warn },
+  footBtnDanger: { backgroundColor: C.fail },
+  footBtnOff: { backgroundColor: C.raised },
+  note: {
+    fontFamily: F.sans, fontSize: 11, color: C.dim, lineHeight: 17,
+    paddingHorizontal: S.md, paddingTop: S.lg,
+  },
   footText: { fontFamily: F.sansBold, fontSize: 12, color: C.well },
 
   searchWrap: {

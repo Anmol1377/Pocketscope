@@ -34,17 +34,28 @@ export default String.raw`
   };
 
   // ---- console ----
+  // Kept so Eruda, which only captures from its own init, can be back-filled when
+  // opened. Text not references: holding page objects would leak.
+  var backlog = [];
+  var remember = function (level, text) {
+    backlog.push({ level: level, text: text });
+    if (backlog.length > 200) backlog.shift();
+  };
   ['log', 'info', 'warn', 'error', 'debug'].forEach(function (lvl) {
     var orig = console[lvl];
     console[lvl] = function () {
       try {
-        post({ t: 'log', level: lvl, text: clip(Array.prototype.map.call(arguments, function (a) { return show(a); }).join(' '), 4000) });
+        var text = clip(Array.prototype.map.call(arguments, function (a) { return show(a); }).join(' '), 4000);
+        remember(lvl, text);
+        post({ t: 'log', level: lvl, text: text });
       } catch (e) {}
       if (orig) return orig.apply(console, arguments);   // page behaviour never changes
     };
   });
   window.addEventListener('error', function (e) {
-    post({ t: 'log', level: 'error', text: (e.message || 'Error') + (e.filename ? '  ' + e.filename.split('/').pop() + ':' + e.lineno : '') });
+    var t = (e.message || 'Error') + (e.filename ? '  ' + e.filename.split('/').pop() + ':' + e.lineno : '');
+    remember('error', t);
+    post({ t: 'log', level: 'error', text: t });
   });
   window.addEventListener('unhandledrejection', function (e) {
     post({ t: 'log', level: 'error', text: 'Unhandled rejection: ' + show(e.reason) });
@@ -177,8 +188,17 @@ export default String.raw`
     s.src = 'https://cdn.jsdelivr.net/npm/eruda';
     s.onload = function () {
       try {
-        eruda.init();
-        try { eruda.get('settings').set('theme', 'Dark'); } catch (e) {}
+        eruda.init({ defaults: { theme: 'Dark', displaySize: 55, transparency: 1 } });
+        // Eruda captures only from its own init; replay what the page logged before.
+        try {
+          var c = eruda.get('console');
+          if (c) {
+            c.log('%c-- ' + backlog.length + ' earlier console entries, replayed by Pocketscope --', 'color:#5AA9E6');
+            backlog.forEach(function (e) {
+              (typeof c[e.level] === 'function' ? c[e.level] : c.log).call(c, e.text);
+            });
+          }
+        } catch (e) {}
         eruda.show();
       } catch (e) {}
     };

@@ -54,7 +54,9 @@ See [BUILD.md](BUILD.md) for the reasoning behind the order.
 - [x] History, searchable, backed by AsyncStorage
 - [x] Bookmarks, searchable
 - [x] Downloads — handed to Android's download manager, no file-system module needed
-- [x] Clear browsing data — cache, cookies, form data, storage, history, downloads
+- [x] Clear browsing data — per-item checkboxes: cookies, site storage, cache,
+      form data, page history, browsing history, downloads, captured data
+- [x] Eruda opens dark and is back-filled with console output from before it loaded
 - [x] Settings screen — start page, desktop UA, keep-log, clear data
 - [x] Captured data is per tab and clears on each page load (toggle to keep it)
 - [x] Clear button in the drawer; Eruda opens in dark theme

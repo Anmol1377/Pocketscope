@@ -7,7 +7,7 @@ import { WebView } from 'react-native-webview';
 import AGENT from './agent';
 import START_HTML from './startpage';
 import DevDrawer, { ScopeTrace, toCurl } from './DevDrawer';
-import { Tabs, UrlList, Settings } from './Screens';
+import { Tabs, UrlList, Settings, ClearData } from './Screens';
 import { usePersistedList } from './store';
 import { getItem, setItem, useOptionalFonts, Icon, SafeAreaHost, useInsets } from './native';
 import { C, F, S } from './theme';
@@ -158,22 +158,34 @@ function App() {
 
   const clearCaptured = (id = activeId) => patchData(id, () => blankData());
 
-  const clearBrowsingData = () => {
-    Alert.alert('Clear browsing data?', 'Cache, cookies, form data, history and downloads. Bookmarks are kept.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Clear', style: 'destructive', onPress: () => {
-        Object.values(webs.current).forEach((r) => {
-          try { r?.clearCache?.(true); r?.clearHistory?.(); r?.clearFormData?.(); } catch {}
-        });
-        web()?.injectJavaScript(
-          'try{localStorage.clear();sessionStorage.clear();' +
-          "document.cookie.split(';').forEach(function(c){document.cookie=c.split('=')[0]+'=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/'})}catch(e){}; true;"
-        );
-        history.clear(); downloads.clear();
-        setData({ [activeId]: blankData() });
-        setScreen(null);
-      } },
-    ]);
+  const clearBrowsingData = (picked) => {
+    const done = [];
+    if (picked.cookies || picked.storage) {
+      const js = [
+        picked.storage && 'try{localStorage.clear();sessionStorage.clear()}catch(e){}',
+        picked.storage && "try{indexedDB.databases&&indexedDB.databases().then(function(l){l.forEach(function(d){indexedDB.deleteDatabase(d.name)})})}catch(e){}",
+        picked.cookies && "try{document.cookie.split(';').forEach(function(c){var k=c.split('=')[0].trim();" +
+          "['/','']. forEach(function(p){document.cookie=k+'=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path='+p})})}catch(e){}",
+      ].filter(Boolean).join(';');
+      web()?.injectJavaScript(js + '; true;');
+      if (picked.cookies) done.push('cookies');
+      if (picked.storage) done.push('site storage');
+    }
+    Object.values(webs.current).forEach((r) => {
+      try {
+        if (picked.cache) r?.clearCache?.(true);
+        if (picked.formData) r?.clearFormData?.();
+        if (picked.navHist) r?.clearHistory?.();
+      } catch {}
+    });
+    if (picked.cache) done.push('cache');
+    if (picked.formData) done.push('form data');
+    if (picked.navHist) done.push('page history');
+    if (picked.history) { history.clear(); done.push('history'); }
+    if (picked.downloads) { downloads.clear(); done.push('downloads'); }
+    if (picked.captured) { setData({ [activeId]: blankData() }); done.push('captured data'); }
+    setScreen(null);
+    Alert.alert('Cleared', done.join(', ') + '.');
   };
 
   const evalJs = (code) => {
@@ -351,13 +363,20 @@ function App() {
           onRemove={downloads.remove} onClear={downloads.clear}
         />
       )}
+      {screen === 'clear' && (
+        <ClearData
+          topInset={insets.top}
+          onClose={() => setScreen('settings')}
+          onClear={clearBrowsingData}
+        />
+      )}
       {screen === 'settings' && (
         <Settings
           topInset={insets.top}
           homeKey={homeKey} homes={HOMES}
           onPickHome={(k) => { setPref(HOME_KEY, k, setHomeKey); go(HOMES[k].url); }}
           onClose={() => setScreen(null)}
-          onClearData={clearBrowsingData}
+          onClearData={() => setScreen('clear')}
           onClearCaptured={() => { clearCaptured(); setScreen(null); }}
           preserveLog={preserveLog}
           onTogglePreserve={() => setPref(PRESERVE_KEY, !preserveLog, setPreserveLog)}
